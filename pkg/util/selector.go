@@ -17,12 +17,13 @@ limitations under the License.
 package util
 
 import (
+	"slices"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/klog/v2"
-	"k8s.io/utils/strings/slices"
 
 	clusterv1alpha1 "github.com/karmada-io/karmada/pkg/apis/cluster/v1alpha1"
 	policyv1alpha1 "github.com/karmada-io/karmada/pkg/apis/policy/v1alpha1"
@@ -94,10 +95,8 @@ func ResourceSelectorPriority(resource *unstructured.Unstructured, rs policyv1al
 
 // ClusterMatches tells if specific cluster matches the affinity.
 func ClusterMatches(cluster *clusterv1alpha1.Cluster, affinity policyv1alpha1.ClusterAffinity) bool {
-	for _, clusterName := range affinity.ExcludeClusters {
-		if clusterName == cluster.Name {
-			return false
-		}
+	if slices.Contains(affinity.ExcludeClusters, cluster.Name) {
+		return false
 	}
 
 	// match rules:
@@ -161,12 +160,7 @@ func ClusterNamesMatches(cluster *clusterv1alpha1.Cluster, clusterNames []string
 		return true
 	}
 
-	for _, clusterName := range clusterNames {
-		if clusterName == cluster.Name {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(clusterNames, cluster.Name)
 }
 
 // ResourceMatchSelectors tells if the specific resource matches the selectors.
@@ -204,11 +198,11 @@ func extractClusterFields(cluster *clusterv1alpha1.Cluster) labels.Set {
 	return clusterFieldsMap
 }
 
-// matchZones checks if zoneMatchExpression can match zones and returns true if it matches.
+// matchZones checks whether the zone selector matches the cluster zones.
 // For unknown operators, matchZones always returns false.
 // The matching rules are as follows:
-// 1. When the operator is "In", zoneMatchExpression must contain all zones, otherwise it doesn't match.
-// 2. When the operator is "NotIn", zoneMatchExpression mustn't contain any one of zones, otherwise it doesn't match.
+// 1. When the operator is "In", any overlapping zone is enough for a match.
+// 2. When the operator is "NotIn", none of the cluster zones can appear in the expression values.
 // 3. When the operator is "Exists", zones mustn't be empty, otherwise it doesn't match.
 // 4. When the operator is "DoesNotExist", zones must be empty, otherwise it doesn't match.
 func matchZones(zoneMatchExpression *corev1.NodeSelectorRequirement, zones []string) bool {
@@ -218,11 +212,11 @@ func matchZones(zoneMatchExpression *corev1.NodeSelectorRequirement, zones []str
 			return false
 		}
 		for _, zone := range zones {
-			if !slices.Contains(zoneMatchExpression.Values, zone) {
-				return false
+			if slices.Contains(zoneMatchExpression.Values, zone) {
+				return true
 			}
 		}
-		return true
+		return false
 	case corev1.NodeSelectorOpNotIn:
 		for _, zone := range zones {
 			if slices.Contains(zoneMatchExpression.Values, zone) {
@@ -238,4 +232,25 @@ func matchZones(zoneMatchExpression *corev1.NodeSelectorRequirement, zones []str
 		klog.V(5).Infof("Unsupported %q operator for zones requirement", zoneMatchExpression.Operator)
 		return false
 	}
+}
+
+// ExtractUniqueNamespacedSelectors returns a new slice of ResourceSelector deduplicated by
+// APIVersion, Kind and Namespace. The returned selectors only contain APIVersion, Kind and Namespace;
+// other fields (e.g. Name, LabelSelector) are intentionally discarded.
+func ExtractUniqueNamespacedSelectors(selectors []policyv1alpha1.ResourceSelector) []policyv1alpha1.ResourceSelector {
+	var results []policyv1alpha1.ResourceSelector
+	handled := make(map[string]bool)
+	for _, selector := range selectors {
+		key := selector.APIVersion + "|" + selector.Kind + "|" + selector.Namespace
+		if handled[key] {
+			continue
+		}
+		results = append(results, policyv1alpha1.ResourceSelector{
+			APIVersion: selector.APIVersion,
+			Kind:       selector.Kind,
+			Namespace:  selector.Namespace,
+		})
+		handled[key] = true
+	}
+	return results
 }

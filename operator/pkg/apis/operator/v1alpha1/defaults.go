@@ -51,7 +51,8 @@ func init() {
 		releaseVer = &version.ReleaseVersion{} // initialize to avoid panic
 	}
 	DefaultKarmadaImageVersion = releaseVer.ReleaseVersion()
-	klog.Infof("default Karmada Image Version: %s", DefaultKarmadaImageVersion)
+	// Use a verbose log level to avoid side effects (unconditional logging) for consumers importing this package.
+	klog.V(4).Infof("default Karmada Image Version: %s", DefaultKarmadaImageVersion)
 }
 
 func addDefaultingFuncs(scheme *runtime.Scheme) error {
@@ -62,7 +63,7 @@ func addDefaultingFuncs(scheme *runtime.Scheme) error {
 // Public to allow building arbitrary schemes.
 // All generated defaulters are covering - they call all nested defaulters.
 func RegisterDefaults(scheme *runtime.Scheme) error {
-	scheme.AddTypeDefaultingFunc(&Karmada{}, func(obj interface{}) { SetObjectDefaultsKarmada(obj.(*Karmada)) })
+	scheme.AddTypeDefaultingFunc(&Karmada{}, func(obj any) { SetObjectDefaultsKarmada(obj.(*Karmada)) })
 	return nil
 }
 

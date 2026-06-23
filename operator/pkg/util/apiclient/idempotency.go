@@ -18,6 +18,7 @@ package apiclient
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -25,6 +26,7 @@ import (
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	crdsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
@@ -95,7 +97,7 @@ func CreateOrUpdateService(client clientset.Interface, service *corev1.Service) 
 			// Ignore if the Service is invalid with this error message:
 			// Service "apiserver" is invalid: provided Port is already allocated.
 			if apierrors.IsInvalid(err) && strings.Contains(err.Error(), errAllocated.Error()) {
-				klog.V(2).ErrorS(err, "failed to create or update service", "service", klog.KObj(service))
+				klog.ErrorS(err, "failed to create or update service", "service", klog.KObj(service))
 				return nil
 			}
 			return fmt.Errorf("unable to create Service: %v", err)
@@ -119,21 +121,30 @@ func CreateOrUpdateService(client clientset.Interface, service *corev1.Service) 
 }
 
 // CreateOrUpdateDeployment creates a Deployment if the target resource doesn't exist. If the resource exists already, this function will update the resource instead.
-func CreateOrUpdateDeployment(client clientset.Interface, deployment *appsv1.Deployment) error {
-	_, err := client.AppsV1().Deployments(deployment.GetNamespace()).Create(context.TODO(), deployment, metav1.CreateOptions{})
+func CreateOrUpdateDeployment(client clientset.Interface, deployment *appsv1.Deployment) (*appsv1.Deployment, error) {
+	var latest *appsv1.Deployment
+	var err error
+	latest, err = client.AppsV1().Deployments(deployment.GetNamespace()).Create(context.TODO(), deployment, metav1.CreateOptions{})
 	if err != nil {
 		if !apierrors.IsAlreadyExists(err) {
-			return err
+			return nil, err
 		}
 
-		_, err := client.AppsV1().Deployments(deployment.GetNamespace()).Update(context.TODO(), deployment, metav1.UpdateOptions{})
+		var older *appsv1.Deployment
+		older, err = client.AppsV1().Deployments(deployment.GetNamespace()).Get(context.TODO(), deployment.GetName(), metav1.GetOptions{})
 		if err != nil {
-			return err
+			return nil, err
+		}
+
+		deployment.ResourceVersion = older.ResourceVersion
+		latest, err = client.AppsV1().Deployments(deployment.GetNamespace()).Update(context.TODO(), deployment, metav1.UpdateOptions{})
+		if err != nil {
+			return nil, err
 		}
 	}
 
-	klog.V(5).InfoS("Successfully created or updated deployment", "deployment", deployment.GetName())
-	return nil
+	klog.V(5).InfoS("Successfully created or updated Deployment", "Deployment", deployment.GetName())
+	return latest, err
 }
 
 // CreateOrUpdateMutatingWebhookConfiguration creates a MutatingWebhookConfiguration if the target resource doesn't exist. If the resource exists already, this function will update the resource instead.
@@ -205,19 +216,31 @@ func CreateOrUpdateAPIService(apiRegistrationClient aggregator.Interface, apiser
 	return nil
 }
 
-// CreateCustomResourceDefinitionIfNeed creates a CustomResourceDefinition if the target resource doesn't exist. If the resource exists already, this function will update the resource instead.
-func CreateCustomResourceDefinitionIfNeed(client *crdsclient.Clientset, obj *apiextensionsv1.CustomResourceDefinition) error {
-	crdClient := client.ApiextensionsV1().CustomResourceDefinitions()
-	if _, err := crdClient.Create(context.TODO(), obj, metav1.CreateOptions{}); err != nil {
-		if !apierrors.IsAlreadyExists(err) {
-			return err
-		}
-
-		klog.V(5).InfoS("Skip already exist crd", "crd", obj.Name)
-		return nil
+// ApplyCRD applies the CRD to the Karmada API server
+func ApplyCRD(client *crdsclient.Clientset, obj *apiextensionsv1.CustomResourceDefinition) error {
+	data, err := json.Marshal(obj)
+	if err != nil {
+		klog.ErrorS(err, "Failed to marshall CRD data", "crd", obj.Name)
+		return fmt.Errorf("failed to marshall CRD %s: %w", obj.Name, err)
 	}
 
-	klog.V(5).InfoS("Successfully created crd", "crd", obj.Name)
+	crdClient := client.ApiextensionsV1().CustomResourceDefinitions()
+	_, err = crdClient.Patch(
+		context.TODO(),
+		obj.Name,
+		types.ApplyPatchType,
+		data,
+		metav1.PatchOptions{
+			FieldManager: "karmada-operator",
+			Force:        new(true),
+		},
+	)
+	if err != nil {
+		klog.ErrorS(err, "Failed to apply CRD", "crd", obj.Name)
+		return fmt.Errorf("failed to apply CRD %s: %w", obj.Name, err)
+	}
+
+	klog.V(5).InfoS("Successfully applied CRD", "crd", obj.Name)
 	return nil
 }
 
@@ -233,27 +256,30 @@ func PatchCustomResourceDefinition(client *crdsclient.Clientset, name string, da
 }
 
 // CreateOrUpdateStatefulSet creates a StatefulSet if the target resource doesn't exist. If the resource exists already, this function will update the resource instead.
-func CreateOrUpdateStatefulSet(client clientset.Interface, statefulSet *appsv1.StatefulSet) error {
-	_, err := client.AppsV1().StatefulSets(statefulSet.GetNamespace()).Create(context.TODO(), statefulSet, metav1.CreateOptions{})
+func CreateOrUpdateStatefulSet(client clientset.Interface, statefulSet *appsv1.StatefulSet) (*appsv1.StatefulSet, error) {
+	var latest *appsv1.StatefulSet
+	var err error
+	latest, err = client.AppsV1().StatefulSets(statefulSet.GetNamespace()).Create(context.TODO(), statefulSet, metav1.CreateOptions{})
 	if err != nil {
 		if !apierrors.IsAlreadyExists(err) {
-			return err
+			return nil, err
 		}
 
-		older, err := client.AppsV1().StatefulSets(statefulSet.GetNamespace()).Get(context.TODO(), statefulSet.GetName(), metav1.GetOptions{})
+		var older *appsv1.StatefulSet
+		older, err = client.AppsV1().StatefulSets(statefulSet.GetNamespace()).Get(context.TODO(), statefulSet.GetName(), metav1.GetOptions{})
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		statefulSet.ResourceVersion = older.ResourceVersion
-		_, err = client.AppsV1().StatefulSets(statefulSet.GetNamespace()).Update(context.TODO(), statefulSet, metav1.UpdateOptions{})
+		latest, err = client.AppsV1().StatefulSets(statefulSet.GetNamespace()).Update(context.TODO(), statefulSet, metav1.UpdateOptions{})
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 
-	klog.V(5).InfoS("Successfully created or updated statefulset", "statefulset", statefulSet.GetName())
-	return nil
+	klog.V(5).InfoS("Successfully created or updated StatefulSet", "StatefulSet", statefulSet.GetName())
+	return latest, nil
 }
 
 // CreateOrUpdateClusterRole creates a Clusterrole if the target resource doesn't exist. If the resource exists already, this function will update the resource instead.
@@ -386,4 +412,28 @@ func GetService(client clientset.Interface, name, namespace string) (*corev1.Ser
 
 func containsLabels(object metav1.ObjectMeta, ls labels.Set) bool {
 	return ls.AsSelector().Matches(labels.Set(object.GetLabels()))
+}
+
+// CreateOrUpdatePodDisruptionBudget creates a PodDisruptionBudget if the target resource doesn't exist. If the resource exists already, this function will update the resource instead.
+func CreateOrUpdatePodDisruptionBudget(client clientset.Interface, pdb *policyv1.PodDisruptionBudget) error {
+	existing, errGet := client.PolicyV1().PodDisruptionBudgets(pdb.GetNamespace()).Get(context.TODO(), pdb.GetName(), metav1.GetOptions{})
+	if errGet != nil {
+		if apierrors.IsNotFound(errGet) {
+			_, errC := client.PolicyV1().PodDisruptionBudgets(pdb.GetNamespace()).Create(context.TODO(), pdb, metav1.CreateOptions{})
+			if errC != nil {
+				return errC
+			}
+			klog.V(5).InfoS("Successfully created PodDisruptionBudget", "PodDisruptionBudget", pdb.GetName())
+		}
+
+		return errGet
+	}
+
+	pdb.ResourceVersion = existing.ResourceVersion
+	_, errUpdate := client.PolicyV1().PodDisruptionBudgets(pdb.GetNamespace()).Update(context.TODO(), pdb, metav1.UpdateOptions{})
+	if errUpdate != nil {
+		return errUpdate
+	}
+	klog.V(5).InfoS("Successfully updated PodDisruptionBudget", "PodDisruptionBudget", pdb.GetName())
+	return nil
 }

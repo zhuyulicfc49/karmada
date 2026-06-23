@@ -127,7 +127,6 @@ func (s *store) List(ctx context.Context, key string, opts storage.ListOptions, 
 	if objFilter != nil {
 		filteredItems := make([]unstructured.Unstructured, 0, len(objects.Items))
 		for _, obj := range objects.Items {
-			obj := obj
 			if objFilter(&obj) {
 				filteredItems = append(filteredItems, obj)
 			}
@@ -189,14 +188,15 @@ func (s *store) GuaranteedUpdate(context.Context, string, runtime.Object, bool, 
 	return fmt.Errorf("guaranteedUpdate is not supported in proxy store")
 }
 
-// Count implements storage.Interface.
-func (s *store) Count(string) (int64, error) {
-	return 0, fmt.Errorf("count is not supported in proxy store")
+// Stats implements storage.Interface.
+func (s *store) Stats(context.Context) (storage.Stats, error) {
+	return storage.Stats{}, fmt.Errorf("unimplemented")
 }
 
 // RequestWatchProgress implements storage.Interface.
 func (s *store) RequestWatchProgress(context.Context) error {
-	return fmt.Errorf("not implemented")
+	// Member cluster's APIServer done not support watch progress. So do nothing here.
+	return nil
 }
 
 // GetCurrentResourceVersion implements storage.Interface
@@ -223,12 +223,39 @@ func (s *store) GetCurrentResourceVersion(ctx context.Context) (uint64, error) {
 	return currentResourceVersion, nil
 }
 
+// EnableResourceSizeEstimation enables estimating resource size by providing function get keys from storage.
+// No-op in proxy store as it doesn't manage actual storage.
+func (s *store) EnableResourceSizeEstimation(storage.KeysFunc) error {
+	return nil
+}
+
+// CompactRevision implements storage.Interface.
+func (s *store) CompactRevision() int64 {
+	return 0
+}
+
 // ReadinessCheck checks if the storage is ready for accepting requests.
 // Since store itself does not actually hold the data but only provides
 // methods for querying, and the caller will not use this method to detect
 // the ready status, so it is not necessary to implement this interface.
 func (s *store) ReadinessCheck() error {
 	return fmt.Errorf("not implemented")
+}
+
+// IsWatchListSemanticsUnSupported informs the store doesn't support WatchList semantics.
+// Returning true signals that WatchList can NOT be used.
+//
+// Background:
+// Since Kubernetes v1.35, the client-go enabled WatchListClient feature by default, which would
+// prevent the cache from completing its initialization. See:
+// - Kubernetes PR: https://github.com/kubernetes/kubernetes/pull/134180
+// - Related tracking issue: https://github.com/kubernetes/kubernetes/issues/135895
+//
+// Purpose:
+// This implementation disables the WatchListClient feature to prevent incompatible changes from
+// being introduced. Whether karmada-search needs to adapt to this feature requires further investigation.
+func (s *store) IsWatchListSemanticsUnSupported() bool {
+	return true
 }
 
 func (s *store) client(namespace string) (dynamic.ResourceInterface, error) {

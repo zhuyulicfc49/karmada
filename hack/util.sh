@@ -27,6 +27,7 @@ KUBE_CONTROLLER_POD_LABEL="kube-controller-manager"
 KARMADA_AGGREGATION_APISERVER_LABEL="karmada-aggregated-apiserver"
 KARMADA_CONTROLLER_LABEL="karmada-controller-manager"
 KARMADA_SCHEDULER_LABEL="karmada-scheduler"
+KARMADA_DESCHEDULER_LABEL="karmada-descheduler"
 KARMADA_WEBHOOK_LABEL="karmada-webhook"
 AGENT_POD_LABEL="karmada-agent"
 INTERPRETER_WEBHOOK_EXAMPLE_LABEL="karmada-interpreter-webhook-example"
@@ -39,7 +40,7 @@ KARMADA_GO_PACKAGE="github.com/karmada-io/karmada"
 
 MIN_GO_VERSION="go$(go list -m -f {{.GoVersion}})"
 
-DEFAULT_CLUSTER_VERSION="kindest/node:v1.31.2"
+DEFAULT_CLUSTER_VERSION="kindest/node:v1.35.0"
 
 # KIND_VERSION defines the version of Kind (Kubernetes IN Docker) tool to be used
 # across all scripts in the project. This version is referenced by:
@@ -521,6 +522,20 @@ function util::get_docker_native_ipaddress(){
   docker inspect --format='{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "${container_name}"
 }
 
+# util::get_kind_cluster_loadbalancer_ip returns a load balancer IP that stays on the
+# Docker network of the kind cluster. This is required for cross-cluster traffic,
+# because kubeconfig endpoints on WSL2/macOS may be rewritten to host-facing addresses.
+function util::get_kind_cluster_loadbalancer_ip(){
+  local context_name=$1
+  local docker_native_ip
+  docker_native_ip=$(util::get_docker_native_ipaddress "${context_name}-control-plane")
+  if [[ -z "${docker_native_ip}" ]]; then
+    echo "ERROR: Failed to get docker native IP for ${context_name}-control-plane" >&2
+    return 1
+  fi
+  echo "${docker_native_ip%.*}.8"
+}
+
 # This function returns the IP address and port of a specific docker instance's host IP
 # Parameters:
 #  - $1: docker instance name
@@ -533,6 +548,16 @@ function util::get_docker_host_ip_port(){
   docker inspect --format='{{range $key, $value := index .NetworkSettings.Ports "6443/tcp"}}{{if eq $key 0}}{{$value.HostIp}}:{{$value.HostPort}}{{end}}{{end}}' "${container_name}"
 }
 
+# util::is_wsl2 checks if the current environment is WSL2.
+# Returns:
+#   0 if running in WSL2, 1 otherwise.
+# Usage:
+#   util::is_wsl2 && echo "WSL2 detected" || echo "Not WSL2"
+function util::is_wsl2(){
+  # /proc/sys/fs/binfmt_misc/WSLInterop exists only in WSL2 environments
+  [[ -f /proc/sys/fs/binfmt_misc/WSLInterop ]] || \
+    ( [[ -f /proc/version ]] && grep -q "WSL2" /proc/version )
+}
 # util::check_clusters_ready checks if a cluster is ready, if not, wait until timeout
 function util::check_clusters_ready() {
   local kubeconfig_path=${1}
@@ -548,7 +573,13 @@ function util::check_clusters_ready() {
   os_name=$(go env GOOS)
   local container_ip_port
   case $os_name in
-    linux) container_ip_port=$(util::get_docker_native_ipaddress "${context_name}-control-plane")":6443"
+    linux)
+      if util::is_wsl2; then
+        # WSL2 uses a different method to get the container IP address
+        container_ip_port=$(util::get_docker_host_ip_port "${context_name}-control-plane")
+      else # normal linux environment
+        container_ip_port=$(util::get_docker_native_ipaddress "${context_name}-control-plane")":6443"
+      fi
     ;;
     darwin) container_ip_port=$(util::get_docker_host_ip_port "${context_name}-control-plane")
     ;;
@@ -683,28 +714,65 @@ function util::add_routes() {
   unset IFS
 }
 
-# util::get_macos_ipaddress will get ip address on macos interactively, store to 'MAC_NIC_IPADDRESS' if available
-MAC_NIC_IPADDRESS=''
+# util::get_wsl2_ipaddress will get ip address on wsl2, store to 'WSL2_HOST_IP_ADDRESS' if available
+WSL2_HOST_IP_ADDRESS=''
+function util::get_wsl2_ipaddress() {
+  echo "====================================================" 
+  echo "= Detected that you are installing Karmada on WSL2 =" 
+  echo "====================================================" 
+  WSL2_HOST_IP_ADDRESS=$(hostname -I | awk '{print $1}')
+  util::verify_ip_address "${WSL2_HOST_IP_ADDRESS}"
+}
+
+# util::get_macos_ipaddress will auto-detect the host IP address on macOS, store to 'MAC_NIC_IPADDRESS' if available
+# The function tries the following in order:
+#   1. Use MAC_NIC_IPADDRESS if already set (e.g. by CI or the caller)
+#   2. Detect the active network interface via the routing table
+#   3. Scan common physical interfaces (en0-en3) as a fallback (e.g. when on VPN)
+#   4. Error return
+MAC_NIC_IPADDRESS=${MAC_NIC_IPADDRESS:-}
 function util::get_macos_ipaddress() {
   if [[ $(go env GOOS) = "darwin" ]]; then
-    tmp_ip=$(ipconfig getifaddr en0 || true)
     echo ""
     echo " Detected that you are installing Karmada on macOS "
     echo ""
     echo "It needs a Macintosh IP address to bind Karmada API Server(port 5443),"
-    echo "so that member clusters can access it from docker containers, please"
-    echo -n "input an available IP, "
-    if [[ -z ${tmp_ip} ]]; then
-      echo "you can use the command 'ifconfig' to look for one"
-      tips_msg="[Enter IP address]:"
-    else
-      echo "default IP will be en0 inet addr if exists"
-      tips_msg="[Enter for default ${tmp_ip}]:"
+    echo "so that member clusters can access it from docker containers"
+
+    # If already set by the caller (e.g. CI passing MAC_NIC_IPADDRESS env var), honour it
+    if [[ -n "${MAC_NIC_IPADDRESS:-}" ]]; then
+      util::verify_ip_address "${MAC_NIC_IPADDRESS}"
+      echo "Using provided IP address: ${MAC_NIC_IPADDRESS}"
+      return
     fi
-    read -r -p "${tips_msg}" MAC_NIC_IPADDRESS
-    MAC_NIC_IPADDRESS=${MAC_NIC_IPADDRESS:-$tmp_ip}
+
+    # Auto-detect via routing table (works on any active interface, not just en0)
+    local active_iface
+    active_iface=$(route get default 2>/dev/null | awk '/interface:/{print $2; exit}')
+    MAC_NIC_IPADDRESS=$(ipconfig getifaddr "${active_iface}" 2>/dev/null || true)
+
+    # If the default-route interface has no IP (e.g. VPN tunnel), scan physical NICs
+    if [[ -z "${MAC_NIC_IPADDRESS}" ]]; then
+      echo "Default route interface '${active_iface}' has no IP (VPN?), scanning physical NICs..."
+      local iface
+      for iface in en0 en1 en2 en3; do
+        MAC_NIC_IPADDRESS=$(ipconfig getifaddr "${iface}" 2>/dev/null || true)
+        if [[ -n "${MAC_NIC_IPADDRESS}" ]]; then
+          break
+        fi
+      done
+    fi
+
+    # Fail fast: 127.0.0.1 is not reachable from Docker containers
+    if [[ -z "${MAC_NIC_IPADDRESS}" ]]; then
+      echo "ERROR: Failed to detect a routable macOS host IP address."
+      echo "       Please set MAC_NIC_IPADDRESS to your host's IP and retry, e.g.:"
+      echo "       export MAC_NIC_IPADDRESS=<your-ip>"
+      return 1
+    fi
+
     util::verify_ip_address "${MAC_NIC_IPADDRESS}"
-    echo "Using IP address: ${MAC_NIC_IPADDRESS}"
+    echo "Using macOS host IP: ${MAC_NIC_IPADDRESS}"
   else # non-macOS
     MAC_NIC_IPADDRESS=${MAC_NIC_IPADDRESS:-}
   fi
@@ -780,27 +848,4 @@ function util::set_mirror_registry_for_china_mainland() {
     grep 'mirrors.ustc.edu.cn' ${repo_root}/${dockerfile} > /dev/null || sed -i'' -e "/FROM alpine:/a\\
 RUN echo -e http://mirrors.ustc.edu.cn/alpine/v3.21/main/ > /etc/apk/repositories" ${repo_root}/${dockerfile}
   done
-}
-
-# util::wait_nodes_taint_disappear will wait for all the nodes' taint to disappear
-# Parameters:
-#  - timeout: Timeout in seconds.
-#  - kubeconfig_path: The path of kubeconfig.
-# Returns:
-#  1 if the condition is not met before the timeout, else 0
-function util::wait_nodes_taint_disappear() {
-  local timeout=${1}
-  local kubeconfig_path=${2}
-
-  timeout "${timeout}" bash <<EOF && return 0
-    while true
-    do
-      taints=\$(kubectl get nodes --kubeconfig=${kubeconfig_path} -o=jsonpath="{.items[*].spec.taints}")
-      if [ -z \$taints ]; then
-        exit
-      fi
-    done
-EOF
-  echo "Timeout for nodes' taint to disappear"
-  return 1
 }

@@ -28,9 +28,10 @@ import (
 	"github.com/go-openapi/jsonpointer"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/api/validate/content"
 	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 	metav1validation "k8s.io/apimachinery/pkg/apis/meta/v1/validation"
-	"k8s.io/apimachinery/pkg/util/validation"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/utils/ptr"
 
@@ -39,15 +40,31 @@ import (
 )
 
 // ValidatePropagationSpec validates a PropagationSpec before creation or update.
-func ValidatePropagationSpec(spec policyv1alpha1.PropagationSpec) field.ErrorList {
+func ValidatePropagationSpec(spec policyv1alpha1.PropagationSpec, policyNamespace string) field.ErrorList {
 	var allErrs field.ErrorList
 	allErrs = append(allErrs, ValidatePlacement(spec.Placement, field.NewPath("spec").Child("placement"))...)
 	if spec.Failover != nil && spec.Failover.Application != nil && !spec.PropagateDeps {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("spec").Child("propagateDeps"), spec.PropagateDeps, "application failover is set, propagateDeps must be true"))
 	}
 	allErrs = append(allErrs, ValidateFailover(spec.Failover, field.NewPath("spec").Child("failover"))...)
+	allErrs = append(allErrs, validateResourceSelectors(spec.ResourceSelectors, policyNamespace, field.NewPath("spec").Child("resourceSelectors"))...)
 	allErrs = append(allErrs, validateResourceSelectorsIfPreemptionEnabled(spec, field.NewPath("spec").Child("resourceSelectors"))...)
 	allErrs = append(allErrs, validateSuspension(spec.Suspension, field.NewPath("spec").Child("suspension"))...)
+	return allErrs
+}
+
+// validateResourceSelectors validates ResourceSelectors before creation or update.
+func validateResourceSelectors(selectors []policyv1alpha1.ResourceSelector, policyNamespace string, fldPath *field.Path) field.ErrorList {
+	if len(policyNamespace) == 0 {
+		return nil
+	}
+
+	var allErrs field.ErrorList
+	for index, selector := range selectors {
+		if selector.Namespace != policyNamespace {
+			allErrs = append(allErrs, field.Invalid(fldPath.Index(index).Child("namespace"), selector.Namespace, "namespace of resource selector must be the same as the namespace of the policy"))
+		}
+	}
 	return allErrs
 }
 
@@ -89,9 +106,65 @@ func ValidatePlacement(placement policyv1alpha1.Placement, fldPath *field.Path) 
 		allErrs = append(allErrs, field.Invalid(fldPath, placement, "clusterAffinities cannot co-exist with clusterAffinity"))
 	}
 
+	// OverflowAffinities can only be used with dynamic weight or aggregated scheduling.
+	allowOverflowScheduling := util.IsOverflowSchedulingAllowed(placement.ReplicaScheduling)
+	for index, affinity := range placement.ClusterAffinities {
+		if affinity.OverflowAffinities != nil && !allowOverflowScheduling {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("clusterAffinities").Index(index).Child("overflowAffinities"), affinity.OverflowAffinities, "overflowAffinities can only be used together with dynamic weight or aggregated scheduling"))
+		}
+	}
+
 	allErrs = append(allErrs, ValidateClusterAffinity(placement.ClusterAffinity, fldPath.Child("clusterAffinity"))...)
 	allErrs = append(allErrs, ValidateClusterAffinities(placement.ClusterAffinities, fldPath.Child("clusterAffinities"))...)
 	allErrs = append(allErrs, ValidateSpreadConstraint(placement.SpreadConstraints, fldPath.Child("spreadConstraints"))...)
+	allErrs = append(allErrs, ValidateWorkloadAffinity(placement.WorkloadAffinity, fldPath.Child("workloadAffinity"))...)
+	allErrs = append(allErrs, validateClusterTolerations(placement.ClusterTolerations, fldPath.Child("clusterTolerations"))...)
+	return allErrs
+}
+
+// validateClusterTolerations validates clusterTolerations in a Placement.
+// The Lt and Gt operators introduced by the Kubernetes TaintTolerationComparisonOperators
+// feature gate (alpha, KEP-5471) are intentionally disallowed here. Karmada applies
+// tolerations to clusters rather than nodes, which represents distinct semantics.
+// Until the upstream feature reaches stability and Karmada defines its own cluster-level
+// SLA semantics, allowing Lt/Gt would risk compatibility issues across member clusters
+// with different feature gate configurations.
+func validateClusterTolerations(tolerations []corev1.Toleration, fldPath *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+	for i, toleration := range tolerations {
+		if toleration.Operator == corev1.TolerationOpLt || toleration.Operator == corev1.TolerationOpGt {
+			allErrs = append(allErrs, field.NotSupported(fldPath.Index(i).Child("operator"),
+				toleration.Operator,
+				[]string{"", string(corev1.TolerationOpExists), string(corev1.TolerationOpEqual)}))
+		}
+	}
+	return allErrs
+}
+
+// ValidateWorkloadAffinity validates a workloadAffinity before creation or update.
+func ValidateWorkloadAffinity(workloadAffinity *policyv1alpha1.WorkloadAffinity, fldPath *field.Path) field.ErrorList {
+	if workloadAffinity == nil {
+		return nil
+	}
+
+	var allErrs field.ErrorList
+
+	if workloadAffinity.Affinity != nil {
+		for _, msg := range content.IsLabelKey(workloadAffinity.Affinity.GroupByLabelKey) {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("affinity").Child("groupByLabelKey"), workloadAffinity.Affinity.GroupByLabelKey, msg))
+		}
+	}
+	if workloadAffinity.AntiAffinity != nil {
+		for _, msg := range content.IsLabelKey(workloadAffinity.AntiAffinity.GroupByLabelKey) {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("antiAffinity").Child("groupByLabelKey"), workloadAffinity.AntiAffinity.GroupByLabelKey, msg))
+		}
+	}
+
+	if workloadAffinity.Affinity != nil && workloadAffinity.AntiAffinity != nil &&
+		workloadAffinity.Affinity.GroupByLabelKey == workloadAffinity.AntiAffinity.GroupByLabelKey {
+		allErrs = append(allErrs, field.Invalid(fldPath, workloadAffinity,
+			"affinity and antiAffinity must not use the same groupByLabelKey"))
+	}
 	return allErrs
 }
 
@@ -115,7 +188,7 @@ func ValidateClusterAffinities(affinities []policyv1alpha1.ClusterAffinityTerm, 
 
 	affinityNames := make(map[string]bool)
 	for index := range affinities {
-		for _, err := range validation.IsQualifiedName(affinities[index].AffinityName) {
+		for _, err := range content.IsLabelKey(affinities[index].AffinityName) {
 			allErrs = append(allErrs, field.Invalid(fldPath.Index(index), affinities[index].AffinityName, err))
 		}
 		if _, exist := affinityNames[affinities[index].AffinityName]; exist {
@@ -125,7 +198,44 @@ func ValidateClusterAffinities(affinities []policyv1alpha1.ClusterAffinityTerm, 
 		}
 
 		allErrs = append(allErrs, ValidateClusterAffinity(&affinities[index].ClusterAffinity, fldPath.Index(index))...)
+		allErrs = append(allErrs, ValidateOverflowAffinities(affinities[index], fldPath.Index(index))...)
 	}
+	return allErrs
+}
+
+// ValidateOverflowAffinities validates the overflowAffinities of a ClusterAffinityTerm.
+// It checks:
+// 1. OverflowAffinities can only be set when the inline ClusterAffinity is non-empty.
+// 2. Each overflow affinity name must be a valid label key.
+// 3. Overflow affinity names must be unique and must not duplicate the primary group's affinityName.
+// 4. Each overflow affinity's ClusterAffinity is validated recursively.
+func ValidateOverflowAffinities(affinity policyv1alpha1.ClusterAffinityTerm, fldPath *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+
+	if affinity.OverflowAffinities == nil {
+		return nil
+	}
+
+	// OverflowAffinities can only be set when ClusterAffinity is specified.
+	if emptyClusterAffinity(affinity.ClusterAffinity) {
+		allErrs = append(allErrs, field.Invalid(fldPath.Child("overflowAffinities"), affinity.OverflowAffinities, "overflowAffinities can only be used together with the inline ClusterAffinity"))
+	}
+
+	// Validate overflow affinity names are unique.
+	overflowNames := sets.New[string](affinity.AffinityName)
+	for oi, oa := range affinity.OverflowAffinities {
+		for _, err := range content.IsLabelKey(oa.AffinityName) {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("overflowAffinities").Index(oi).Child("affinityName"), oa.AffinityName, err))
+		}
+		if overflowNames.Has(oa.AffinityName) {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("overflowAffinities").Index(oi).Child("affinityName"), oa.AffinityName, "overflow affinity name must be unique and must not duplicate the primary group's affinityName"))
+		} else {
+			overflowNames.Insert(oa.AffinityName)
+		}
+
+		allErrs = append(allErrs, ValidateClusterAffinity(&affinity.OverflowAffinities[oi].ClusterAffinity, fldPath.Child("overflowAffinities").Index(oi))...)
+	}
+
 	return allErrs
 }
 
@@ -185,7 +295,7 @@ func ValidateSpreadConstraint(spreadConstraints []policyv1alpha1.SpreadConstrain
 				*marked = true
 			}
 			if marked == nil {
-				spreadByFieldsWithErrorMark[constraint.SpreadByField] = ptr.To[bool](false)
+				spreadByFieldsWithErrorMark[constraint.SpreadByField] = new(false)
 			}
 		}
 	}
@@ -211,6 +321,7 @@ func ValidateFailover(failoverBehavior *policyv1alpha1.FailoverBehavior, fldPath
 	}
 
 	allErrs = append(allErrs, ValidateApplicationFailover(failoverBehavior.Application, fldPath.Child("application"))...)
+	allErrs = append(allErrs, validateClusterFailover(failoverBehavior.Cluster, fldPath.Child("cluster"))...)
 	return allErrs
 }
 
@@ -226,23 +337,67 @@ func ValidateApplicationFailover(applicationFailoverBehavior *policyv1alpha1.App
 		allErrs = append(allErrs, field.Invalid(fldPath.Child("decisionConditions").Child("tolerationSeconds"), *applicationFailoverBehavior.DecisionConditions.TolerationSeconds, "must be greater than or equal to 0"))
 	}
 
-	if applicationFailoverBehavior.PurgeMode != policyv1alpha1.Graciously && applicationFailoverBehavior.GracePeriodSeconds != nil {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("gracePeriodSeconds"), *applicationFailoverBehavior.GracePeriodSeconds, "only takes effect when purgeMode is graciously"))
+	//nolint:staticcheck
+	// disable `deprecation` check for backward compatibility.
+	if applicationFailoverBehavior.PurgeMode != policyv1alpha1.Graciously &&
+		applicationFailoverBehavior.PurgeMode != policyv1alpha1.PurgeModeGracefully &&
+		applicationFailoverBehavior.GracePeriodSeconds != nil {
+		allErrs = append(allErrs, field.Invalid(fldPath.Child("gracePeriodSeconds"), *applicationFailoverBehavior.GracePeriodSeconds, "only takes effect when purgeMode is gracefully"))
 	}
 
-	if applicationFailoverBehavior.PurgeMode == policyv1alpha1.Graciously && applicationFailoverBehavior.GracePeriodSeconds == nil {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("gracePeriodSeconds"), applicationFailoverBehavior.GracePeriodSeconds, "should not be empty when purgeMode is graciously"))
+	//nolint:staticcheck
+	// disable `deprecation` check for backward compatibility.
+	if (applicationFailoverBehavior.PurgeMode == policyv1alpha1.Graciously ||
+		applicationFailoverBehavior.PurgeMode == policyv1alpha1.PurgeModeGracefully) &&
+		applicationFailoverBehavior.GracePeriodSeconds == nil {
+		allErrs = append(allErrs, field.Invalid(fldPath.Child("gracePeriodSeconds"), applicationFailoverBehavior.GracePeriodSeconds, "should not be empty when purgeMode is gracefully"))
 	}
 
 	if applicationFailoverBehavior.GracePeriodSeconds != nil && *applicationFailoverBehavior.GracePeriodSeconds <= 0 {
 		allErrs = append(allErrs, field.Invalid(fldPath.Child("gracePeriodSeconds"), *applicationFailoverBehavior.GracePeriodSeconds, "must be greater than 0"))
 	}
 
+	if applicationFailoverBehavior.StatePreservation != nil {
+		allErrs = append(allErrs, validateStatePreservation(applicationFailoverBehavior.StatePreservation, fldPath.Child("statePreservation"))...)
+	}
+
 	return allErrs
 }
 
+func validateClusterFailover(clusterFailoverBehavior *policyv1alpha1.ClusterFailoverBehavior, fldPath *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+
+	if clusterFailoverBehavior == nil {
+		return nil
+	}
+
+	if clusterFailoverBehavior.StatePreservation != nil {
+		allErrs = append(allErrs, validateStatePreservation(clusterFailoverBehavior.StatePreservation, fldPath.Child("statePreservation"))...)
+	}
+
+	return allErrs
+}
+
+func validateStatePreservation(statePreservation *policyv1alpha1.StatePreservation, fldPath *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+
+	if statePreservation == nil {
+		return nil
+	}
+
+	for index, rule := range statePreservation.Rules {
+		allErrs = append(allErrs, validateStatePreservationRule(rule, fldPath.Child("rules").Index(index))...)
+	}
+
+	return allErrs
+}
+
+func validateStatePreservationRule(rule policyv1alpha1.StatePreservationRule, fldPath *field.Path) field.ErrorList {
+	return metav1validation.ValidateLabelName(rule.AliasLabelName, fldPath.Child("aliasLabelName"))
+}
+
 // ValidateOverrideSpec validates that the overrider specification is correctly defined.
-func ValidateOverrideSpec(overrideSpec *policyv1alpha1.OverrideSpec) field.ErrorList {
+func ValidateOverrideSpec(overrideSpec *policyv1alpha1.OverrideSpec, policyNamespace string) field.ErrorList {
 	var allErrs field.ErrorList
 	if overrideSpec == nil {
 		return nil
@@ -264,6 +419,7 @@ func ValidateOverrideSpec(overrideSpec *policyv1alpha1.OverrideSpec) field.Error
 		allErrs = append(allErrs, field.Invalid(specPath.Child("overriders"), overrideSpec.Overriders, "overrideRules and overriders can't co-exist"))
 	}
 	allErrs = append(allErrs, ValidateOverrideRules(overrideSpec.OverrideRules, specPath)...)
+	allErrs = append(allErrs, validateResourceSelectors(overrideSpec.ResourceSelectors, policyNamespace, specPath.Child("resourceSelectors"))...)
 	return allErrs
 }
 
@@ -288,6 +444,20 @@ func emptyOverrides(overriders policyv1alpha1.Overriders) bool {
 		return false
 	}
 	return true
+}
+
+// emptyClusterAffinity checks if the cluster affinity is empty. An empty cluster affinity means it doesn't have any selection criteria.
+func emptyClusterAffinity(affinity policyv1alpha1.ClusterAffinity) bool {
+	if affinity.LabelSelector != nil {
+		return false
+	}
+	if affinity.FieldSelector != nil {
+		return false
+	}
+	if len(affinity.ClusterNames) != 0 {
+		return false
+	}
+	return len(affinity.ExcludeClusters) == 0
 }
 
 // ValidateOverrideRules validates the overrideRules of override policy.
@@ -323,6 +493,9 @@ func ValidateOverrideRules(overrideRules []policyv1alpha1.RuleWithCluster, fldPa
 			// validates that either YAML or JSON is selected for each field overrider.
 			if len(fieldOverrider.YAML) > 0 && len(fieldOverrider.JSON) > 0 {
 				allErrs = append(allErrs, field.Invalid(fieldPath, fieldOverrider, "FieldOverrider has both YAML and JSON set. Only one is allowed"))
+			}
+			if len(fieldOverrider.YAML) == 0 && len(fieldOverrider.JSON) == 0 {
+				allErrs = append(allErrs, field.Required(fieldPath, "FieldOverrider must have either JSON or YAML set"))
 			}
 			// validates the field path.
 			if _, err := jsonpointer.New(fieldOverrider.FieldPath); err != nil {

@@ -26,16 +26,17 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/utils/ptr"
 	controllerruntime "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	clusterv1alpha1 "github.com/karmada-io/karmada/pkg/apis/cluster/v1alpha1"
 	workv1alpha1 "github.com/karmada-io/karmada/pkg/apis/work/v1alpha1"
@@ -48,6 +49,27 @@ import (
 	"github.com/karmada-io/karmada/pkg/util/objectwatcher"
 	testhelper "github.com/karmada-io/karmada/test/helper"
 )
+
+// withGVKInterceptor returns an interceptor that sets the GVK on objects after Get operations.
+// This simulates the behavior of real API server clients, which automatically set GVK.
+// The fake client doesn't do this by default (since controller-runtime v0.22.0).
+func withGVKInterceptor(scheme *runtime.Scheme) interceptor.Funcs {
+	return interceptor.Funcs{
+		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if err := c.Get(ctx, key, obj, opts...); err != nil {
+				return err
+			}
+			// Set GVK from scheme if it's empty (mimicking real client behavior)
+			if obj.GetObjectKind().GroupVersionKind().Empty() {
+				gvks, _, _ := scheme.ObjectKinds(obj)
+				if len(gvks) > 0 {
+					obj.GetObjectKind().SetGroupVersionKind(gvks[0])
+				}
+			}
+			return nil
+		},
+	}
+}
 
 type FakeResourceInterpreter struct {
 	*native.DefaultInterpreter
@@ -78,7 +100,7 @@ func TestExecutionController_Reconcile(t *testing.T) {
 			expectRes: controllerruntime.Result{},
 			existErr:  false,
 			work: newWork(func(work *workv1alpha1.Work) {
-				work.Spec.SuspendDispatching = ptr.To(true)
+				work.Spec.SuspendDispatching = new(true)
 			}),
 		},
 		{
@@ -89,7 +111,7 @@ func TestExecutionController_Reconcile(t *testing.T) {
 			existErr:        false,
 
 			work: newWork(func(w *workv1alpha1.Work) {
-				w.Spec.SuspendDispatching = ptr.To(true)
+				w.Spec.SuspendDispatching = new(true)
 			}),
 		},
 		{
@@ -99,7 +121,7 @@ func TestExecutionController_Reconcile(t *testing.T) {
 			expectEventMessage: fmt.Sprintf("%s %s %s", corev1.EventTypeNormal, events.EventReasonWorkDispatching, WorkSuspendDispatchingConditionMessage),
 			existErr:           false,
 			work: newWork(func(w *workv1alpha1.Work) {
-				w.Spec.SuspendDispatching = ptr.To(true)
+				w.Spec.SuspendDispatching = new(true)
 			}),
 		},
 		{
@@ -109,7 +131,7 @@ func TestExecutionController_Reconcile(t *testing.T) {
 			expectCondition: &metav1.Condition{Type: workv1alpha1.WorkDispatching, Status: metav1.ConditionFalse},
 			existErr:        false,
 			work: newWork(func(w *workv1alpha1.Work) {
-				w.Spec.SuspendDispatching = ptr.To(true)
+				w.Spec.SuspendDispatching = new(true)
 				meta.SetStatusCondition(&w.Status.Conditions, metav1.Condition{
 					Type:   workv1alpha1.WorkDispatching,
 					Status: metav1.ConditionTrue,
@@ -126,7 +148,7 @@ func TestExecutionController_Reconcile(t *testing.T) {
 				now := metav1.Now()
 				work.SetDeletionTimestamp(&now)
 				work.SetFinalizers([]string{util.ExecutionControllerFinalizer})
-				work.Spec.SuspendDispatching = ptr.To(true)
+				work.Spec.SuspendDispatching = new(true)
 			}),
 		},
 		{
@@ -134,12 +156,12 @@ func TestExecutionController_Reconcile(t *testing.T) {
 			ns:             "karmada-es-cluster",
 			expectRes:      controllerruntime.Result{},
 			existErr:       false,
-			resourceExists: ptr.To(true),
+			resourceExists: new(true),
 			work: newWork(func(work *workv1alpha1.Work) {
 				now := metav1.Now()
 				work.SetDeletionTimestamp(&now)
 				work.SetFinalizers([]string{util.ExecutionControllerFinalizer})
-				work.Spec.PreserveResourcesOnDeletion = ptr.To(true)
+				work.Spec.PreserveResourcesOnDeletion = new(true)
 			}),
 		},
 		{
@@ -147,12 +169,12 @@ func TestExecutionController_Reconcile(t *testing.T) {
 			ns:             "karmada-es-cluster",
 			expectRes:      controllerruntime.Result{},
 			existErr:       false,
-			resourceExists: ptr.To(false),
+			resourceExists: new(false),
 			work: newWork(func(work *workv1alpha1.Work) {
 				now := metav1.Now()
 				work.SetDeletionTimestamp(&now)
 				work.SetFinalizers([]string{util.ExecutionControllerFinalizer})
-				work.Spec.PreserveResourcesOnDeletion = ptr.To(false)
+				work.Spec.PreserveResourcesOnDeletion = new(false)
 			}),
 		},
 		{
@@ -160,7 +182,7 @@ func TestExecutionController_Reconcile(t *testing.T) {
 			ns:             "karmada-es-cluster",
 			expectRes:      controllerruntime.Result{},
 			existErr:       false,
-			resourceExists: ptr.To(false),
+			resourceExists: new(false),
 			work: newWork(func(work *workv1alpha1.Work) {
 				now := metav1.Now()
 				work.SetDeletionTimestamp(&now)
@@ -223,7 +245,14 @@ func newController(work *workv1alpha1.Work, recorder *record.FakeRecorder) Contr
 	pod.SetLabels(map[string]string{util.ManagedByKarmadaLabel: util.ManagedByKarmadaLabelValue})
 	restMapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{corev1.SchemeGroupVersion})
 	restMapper.Add(corev1.SchemeGroupVersion.WithKind(pod.Kind), meta.RESTScopeNamespace)
-	fakeClient := fake.NewClientBuilder().WithScheme(gclient.NewSchema()).WithObjects(cluster, work).WithStatusSubresource(work).WithRESTMapper(restMapper).Build()
+	clientScheme := gclient.NewSchema()
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(clientScheme).
+		WithObjects(cluster, work).
+		WithStatusSubresource(work).
+		WithRESTMapper(restMapper).
+		WithInterceptorFuncs(withGVKInterceptor(clientScheme)).
+		Build()
 	dynamicClientSet := dynamicfake.NewSimpleDynamicClient(scheme.Scheme, pod)
 	informerManager := genericmanager.GetInstance()
 	informerManager.ForCluster(cluster.Name, dynamicClientSet, 0).Lister(corev1.SchemeGroupVersion.WithResource("pods"))

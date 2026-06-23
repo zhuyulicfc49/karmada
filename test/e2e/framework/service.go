@@ -56,6 +56,7 @@ func WaitServicePresentOnClusterFitWith(cluster, namespace, name string, fit fun
 	gomega.Eventually(func() bool {
 		svc, err := clusterClient.CoreV1().Services(namespace).Get(context.TODO(), name, metav1.GetOptions{})
 		if err != nil {
+			klog.Errorf("Failed to get Service(%s/%s) on cluster(%s), err: %v", namespace, name, cluster, err)
 			return false
 		}
 		return fit(svc)
@@ -101,7 +102,7 @@ func WaitServiceDisappearOnClusters(clusters []string, namespace, name string) {
 }
 
 // UpdateServiceWithPatch update service with patch bytes.
-func UpdateServiceWithPatch(client kubernetes.Interface, namespace, name string, patch []map[string]interface{}, patchType types.PatchType) {
+func UpdateServiceWithPatch(client kubernetes.Interface, namespace, name string, patch []map[string]any, patchType types.PatchType) {
 	ginkgo.By(fmt.Sprintf("Updating service(%s/%s)", namespace, name), func() {
 		bytes, err := json.Marshal(patch)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())

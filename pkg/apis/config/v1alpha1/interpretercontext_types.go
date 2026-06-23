@@ -107,7 +107,7 @@ type ResourceInterpreterResponse struct {
 	// +optional
 	PatchType *PatchType `json:"patchType,omitempty" protobuf:"bytes,5,opt,name=patchType"`
 
-	// ReplicaRequirements represents the requirements required by each replica.
+	// ReplicaRequirements represents the resource and scheduling requirements for each replica.
 	// Required if InterpreterOperation is InterpreterOperationInterpretReplica.
 	// +optional
 	ReplicaRequirements *workv1alpha2.ReplicaRequirements `json:"replicaRequirements,omitempty"`
@@ -117,6 +117,16 @@ type ResourceInterpreterResponse struct {
 	// Required if InterpreterOperation is InterpreterOperationInterpretReplica.
 	// +optional
 	Replicas *int32 `json:"replicas,omitempty"`
+
+	// Components represents the requirements of multiple pod templates of the referencing resource.
+	// It is designed to support workloads that consist of multiple pod templates,
+	// such as distributed training jobs (e.g., PyTorch, TensorFlow) and big data workloads (e.g., FlinkDeployment),
+	// where each workload is composed of more than one pod template. It is also capable of representing
+	// single-component workloads, such as Deployment.
+	//
+	// Required if InterpreterOperation is InterpreterOperationInterpretComponent.
+	// +optional
+	Components []workv1alpha2.Component `json:"components,omitempty"`
 
 	// Dependencies represents the reference of dependencies object.
 	// Required if InterpreterOperation is InterpreterOperationInterpretDependency.

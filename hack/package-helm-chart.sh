@@ -42,11 +42,12 @@ fi
 tar_file=""
 for chart in ${KARMADA_CHARTS[@]}; 
 do
-    sed -i'' -e "s/\&karmadaImageVersion .*/\&karmadaImageVersion ${version}/g" ./charts/"${chart}"/values.yaml
+    sed -i'' -e "s/\(\&karmadaImageVersion \)[^[:space:]]\+/\1${version}/g" ./charts/"${chart}"/values.yaml
+    sed -i'' -e "s/\(\&karmadaOperatorImageVersion \)[^[:space:]]\+/\1${version}/g" ./charts/"${chart}"/values.yaml
 
     tar_file="${chart}-chart-${version}.tgz"
     echo "Starting to package into a ${chart} chart archive"
-    helm package ./charts/"${chart}" --version "${version}" -d "${output_dir}" -u
+    helm package ./charts/"${chart}" --version "${version}" --app-version "${version}" -d "${output_dir}" -u
 
     echo "Rename ${chart}-${version}.tgz to ${tar_file}"
     mv "${output_dir}/${chart}-${version}.tgz" "${output_dir}/${tar_file}"

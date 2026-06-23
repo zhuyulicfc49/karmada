@@ -41,12 +41,6 @@ const (
 	MaxRespBodyLength = 1 << 20 // 1 MiB
 )
 
-// IsExist Determine whether the path exists
-func IsExist(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
-
 // StringToNetIP String To NetIP
 func StringToNetIP(addr string) net.IP {
 	if ip := net.ParseIP(addr); ip != nil {
@@ -59,8 +53,8 @@ func StringToNetIP(addr string) net.IP {
 func FlagsIP(ip string) []net.IP {
 	var ips []net.IP
 
-	arr := strings.Split(ip, separator)
-	for _, v := range arr {
+	arr := strings.SplitSeq(ip, separator)
+	for v := range arr {
 		ips = append(ips, StringToNetIP(v))
 	}
 	return ips

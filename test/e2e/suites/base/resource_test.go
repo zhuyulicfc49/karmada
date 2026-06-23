@@ -193,14 +193,18 @@ var _ = ginkgo.Describe("[resource-status collection] resource status collection
 					latestSvc, err := kubeClient.CoreV1().Services(serviceNamespace).Get(context.TODO(), serviceName, metav1.GetOptions{})
 					g.Expect(err).NotTo(gomega.HaveOccurred())
 
-					// TODO:  Once karmada-apiserver v1.30 deploy by default,delete the following five lines, see https://github.com/karmada-io/karmada/pull/5141
-					for i := range latestSvc.Status.LoadBalancer.Ingress {
-						if latestSvc.Status.LoadBalancer.Ingress[i].IPMode != nil {
-							latestSvc.Status.LoadBalancer.Ingress[i].IPMode = nil
-						}
+					actualIngresses := make([]struct{ IP, Hostname string }, 0, len(latestSvc.Status.LoadBalancer.Ingress))
+					for _, ingress := range latestSvc.Status.LoadBalancer.Ingress {
+						actualIngresses = append(actualIngresses, struct{ IP, Hostname string }{IP: ingress.IP, Hostname: ingress.Hostname})
 					}
+
+					expectedIngresses := make([]struct{ IP, Hostname string }, 0, len(svcLoadBalancer.Ingress))
+					for _, ingress := range svcLoadBalancer.Ingress {
+						expectedIngresses = append(expectedIngresses, struct{ IP, Hostname string }{IP: ingress.IP, Hostname: ingress.Hostname})
+					}
+
 					klog.Infof("the latest serviceStatus loadBalancer: %v", latestSvc.Status.LoadBalancer)
-					return reflect.DeepEqual(latestSvc.Status.LoadBalancer.Ingress, svcLoadBalancer.Ingress), nil
+					return reflect.DeepEqual(actualIngresses, expectedIngresses), nil
 				}, pollTimeout, pollInterval).Should(gomega.Equal(true))
 			})
 		})
@@ -401,7 +405,7 @@ var _ = ginkgo.Describe("[resource-status collection] resource status collection
 	ginkgo.Context("DaemonSetStatus collection testing", func() {
 		var daemonSetNamespace, daemonSetName string
 		var daemonSet *appsv1.DaemonSet
-		var patch []map[string]interface{}
+		var patch []map[string]any
 
 		ginkgo.BeforeEach(func() {
 			policyNamespace = testNamespace
@@ -422,7 +426,7 @@ var _ = ginkgo.Describe("[resource-status collection] resource status collection
 				},
 			})
 
-			patch = []map[string]interface{}{
+			patch = []map[string]any{
 				{
 					"op":    "replace",
 					"path":  "/spec/placement/clusterAffinity/clusterNames",
@@ -620,96 +624,6 @@ var _ = ginkgo.Describe("[resource-status collection] resource status collection
 
 					return false, nil
 				}, pollTimeout, pollInterval).Should(gomega.Equal(true))
-			})
-		})
-	})
-})
-
-var _ = framework.SerialDescribe("workload status synchronization testing", func() {
-	ginkgo.Context("Deployment status synchronization when cluster failed and recovered soon", func() {
-		var policyNamespace, policyName string
-		var deploymentNamespace, deploymentName string
-		var deployment *appsv1.Deployment
-		var policy *policyv1alpha1.PropagationPolicy
-		var originalReplicas, numOfFailedClusters int
-
-		ginkgo.BeforeEach(func() {
-			policyNamespace = testNamespace
-			policyName = deploymentNamePrefix + rand.String(RandomStrLength)
-			deploymentNamespace = testNamespace
-			deploymentName = policyName
-			deployment = testhelper.NewDeployment(deploymentNamespace, deploymentName)
-			numOfFailedClusters = 1
-			originalReplicas = 3
-
-			policy = testhelper.NewPropagationPolicy(policyNamespace, policyName, []policyv1alpha1.ResourceSelector{
-				{
-					APIVersion: deployment.APIVersion,
-					Kind:       deployment.Kind,
-					Name:       deployment.Name,
-				},
-			}, policyv1alpha1.Placement{
-				ClusterAffinity: &policyv1alpha1.ClusterAffinity{
-					LabelSelector: &metav1.LabelSelector{
-						// only test push mode clusters
-						// because pull mode clusters cannot be disabled by changing APIEndpoint
-						MatchLabels: pushModeClusterLabels,
-					},
-				},
-				ReplicaScheduling: &policyv1alpha1.ReplicaSchedulingStrategy{
-					ReplicaSchedulingType: policyv1alpha1.ReplicaSchedulingTypeDuplicated,
-				},
-			})
-		})
-
-		ginkgo.BeforeEach(func() {
-			framework.CreatePropagationPolicy(karmadaClient, policy)
-			framework.CreateDeployment(kubeClient, deployment)
-			ginkgo.DeferCleanup(func() {
-				framework.RemoveDeployment(kubeClient, deployment.Namespace, deployment.Name)
-				framework.RemovePropagationPolicy(karmadaClient, policy.Namespace, policy.Name)
-			})
-		})
-
-		ginkgo.It("deployment status synchronization testing", func() {
-			var disabledClusters []string
-			targetClusterNames := framework.ExtractTargetClustersFromRB(controlPlaneClient, deployment.Kind, deployment.Namespace, deployment.Name)
-
-			ginkgo.By(fmt.Sprintf("add taint %v to the random one cluster", framework.NotReadyTaintTemplate), func() {
-				temp := numOfFailedClusters
-				for _, targetClusterName := range targetClusterNames {
-					if temp > 0 {
-						err := framework.AddClusterTaint(controlPlaneClient, targetClusterName, *framework.NotReadyTaintTemplate)
-						gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-
-						disabledClusters = append(disabledClusters, targetClusterName)
-						temp--
-					}
-				}
-			})
-
-			ginkgo.By("recover cluster", func() {
-				for _, disabledCluster := range disabledClusters {
-					err := framework.RemoveClusterTaint(controlPlaneClient, disabledCluster, *framework.NotReadyTaintTemplate)
-					gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-				}
-			})
-
-			ginkgo.By("edit deployment in disabled cluster", func() {
-				for _, disabledCluster := range disabledClusters {
-					clusterClient := framework.GetClusterClient(disabledCluster)
-					framework.UpdateDeploymentReplicas(clusterClient, deployment, updateDeploymentReplicas)
-					// wait for the status synchronization
-					gomega.Eventually(func(g gomega.Gomega) (bool, error) {
-						currentDeployment, err := clusterClient.AppsV1().Deployments(testNamespace).Get(context.TODO(), deploymentName, metav1.GetOptions{})
-						g.Expect(err).ShouldNot(gomega.HaveOccurred())
-
-						if *currentDeployment.Spec.Replicas == int32(originalReplicas) {
-							return true, nil
-						}
-						return false, nil
-					}, pollTimeout, pollInterval).Should(gomega.Equal(true))
-				}
 			})
 		})
 	})

@@ -57,6 +57,7 @@ spec:
             - --health-probe-bind-address=$(POD_IP):8000
             - --secure-port=8443
             - --cert-dir=/var/serving-cert
+            - --v={{ .Values.webhook.logVerbosity }}
             {{- with (include "karmada.webhook.featureGates" .) }}
             - {{ . }}
             {{- end }}

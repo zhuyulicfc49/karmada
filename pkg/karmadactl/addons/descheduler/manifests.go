@@ -57,7 +57,7 @@ spec:
             - --scheduler-estimator-ca-file=/etc/karmada/pki/ca.crt
             - --scheduler-estimator-cert-file=/etc/karmada/pki/karmada.crt
             - --scheduler-estimator-key-file=/etc/karmada/pki/karmada.key
-            - --v=4
+            - --v=2
           livenessProbe:
             httpGet:
               path: /healthz

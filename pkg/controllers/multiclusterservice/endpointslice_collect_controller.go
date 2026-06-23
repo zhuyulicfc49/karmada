@@ -46,6 +46,7 @@ import (
 	networkingv1alpha1 "github.com/karmada-io/karmada/pkg/apis/networking/v1alpha1"
 	workv1alpha1 "github.com/karmada-io/karmada/pkg/apis/work/v1alpha1"
 	"github.com/karmada-io/karmada/pkg/controllers/ctrlutil"
+	"github.com/karmada-io/karmada/pkg/features"
 	"github.com/karmada-io/karmada/pkg/sharedcli/ratelimiterflag"
 	"github.com/karmada-io/karmada/pkg/util"
 	"github.com/karmada-io/karmada/pkg/util/fedinformer"
@@ -69,7 +70,7 @@ type EndpointSliceCollectController struct {
 	// Each handler takes the cluster name as key and takes the handler function as the value, e.g.
 	// "member1": instance of ResourceEventHandler
 	eventHandlers sync.Map
-	worker        util.AsyncWorker // worker process resources periodic from rateLimitingQueue.
+	worker        util.AsyncPriorityWorker // worker process resources periodic from rateLimitingQueue.
 
 	ClusterCacheSyncTimeout metav1.Duration
 	RateLimiterOptions      ratelimiterflag.Options
@@ -77,7 +78,7 @@ type EndpointSliceCollectController struct {
 
 var (
 	endpointSliceGVR       = discoveryv1.SchemeGroupVersion.WithResource("endpointslices")
-	multiClusterServiceGVK = networkingv1alpha1.SchemeGroupVersion.WithKind("MultiClusterService")
+	multiClusterServiceGVK = schema.GroupVersion{Group: networkingv1alpha1.GroupVersion.Group, Version: networkingv1alpha1.GroupVersion.Version}.WithKind("MultiClusterService")
 )
 
 // EndpointSliceCollectControllerName is the controller name that will be used when reporting events and metrics.
@@ -133,9 +134,10 @@ func (c *EndpointSliceCollectController) SetupWithManager(mgr controllerruntime.
 // RunWorkQueue initializes worker and run it, worker will process resource asynchronously.
 func (c *EndpointSliceCollectController) RunWorkQueue() {
 	workerOptions := util.Options{
-		Name:          "endpointslice-collect",
-		KeyFunc:       nil,
-		ReconcileFunc: c.collectEndpointSlice,
+		Name:             "endpointslice-collect",
+		KeyFunc:          nil,
+		ReconcileFunc:    c.collectEndpointSlice,
+		UsePriorityQueue: features.FeatureGate.Enabled(features.ControllerPriorityQueue),
 	}
 	c.worker = util.NewAsyncWorker(workerOptions)
 	c.worker.Run(c.Context, c.WorkerNumber)
@@ -224,7 +226,6 @@ func (c *EndpointSliceCollectController) registerInformersAndStart(cluster *clus
 		return nil
 	}(); err != nil {
 		klog.ErrorS(err, "Failed to sync cache for cluster", "cluster", cluster.Name)
-		c.InformerManager.Stop(cluster.Name)
 		return err
 	}
 
@@ -243,20 +244,21 @@ func (c *EndpointSliceCollectController) getEventHandler(clusterName string) cac
 	return eventHandler
 }
 
-func (c *EndpointSliceCollectController) genHandlerAddFunc(clusterName string) func(obj interface{}) {
-	return func(obj interface{}) {
+func (c *EndpointSliceCollectController) genHandlerAddFunc(clusterName string) func(obj any, isInInitialList bool) {
+	return func(obj any, isInInitialList bool) {
 		curObj := obj.(runtime.Object)
 		key, err := keys.FederatedKeyFunc(clusterName, curObj)
 		if err != nil {
 			klog.ErrorS(err, "Failed to generate key for obj", "gvk", curObj.GetObjectKind().GroupVersionKind())
 			return
 		}
-		c.worker.Add(key)
+		priority := util.ItemPriorityIfInInitialList(isInInitialList)
+		c.worker.AddWithOpts(util.AddOpts{Priority: priority}, key)
 	}
 }
 
-func (c *EndpointSliceCollectController) genHandlerUpdateFunc(clusterName string) func(oldObj, newObj interface{}) {
-	return func(oldObj, newObj interface{}) {
+func (c *EndpointSliceCollectController) genHandlerUpdateFunc(clusterName string) func(oldObj, newObj any) {
+	return func(oldObj, newObj any) {
 		curObj := newObj.(runtime.Object)
 		if !reflect.DeepEqual(oldObj, newObj) {
 			key, err := keys.FederatedKeyFunc(clusterName, curObj)
@@ -269,8 +271,8 @@ func (c *EndpointSliceCollectController) genHandlerUpdateFunc(clusterName string
 	}
 }
 
-func (c *EndpointSliceCollectController) genHandlerDeleteFunc(clusterName string) func(obj interface{}) {
-	return func(obj interface{}) {
+func (c *EndpointSliceCollectController) genHandlerDeleteFunc(clusterName string) func(obj any) {
+	return func(obj any) {
 		if deleted, ok := obj.(cache.DeletedFinalStateUnknown); ok {
 			// This object might be stale but ok for our current usage.
 			obj = deleted.Obj
@@ -300,7 +302,8 @@ func (c *EndpointSliceCollectController) handleEndpointSliceEvent(ctx context.Co
 		return err
 	}
 
-	if util.GetLabelValue(endpointSliceObj.GetLabels(), discoveryv1.LabelManagedBy) == util.EndpointSliceDispatchControllerLabelValue {
+	// Exclude EndpointSlice resources that are managed by Karmada system to avoid duplicate reporting.
+	if helper.IsEndpointSliceManagedByKarmada(endpointSliceObj.GetLabels()) {
 		return nil
 	}
 
@@ -359,7 +362,8 @@ func (c *EndpointSliceCollectController) collectTargetEndpointSlice(ctx context.
 			klog.ErrorS(err, "Failed to convert object to EndpointSlice")
 			return err
 		}
-		if util.GetLabelValue(eps.GetLabels(), discoveryv1.LabelManagedBy) == util.EndpointSliceDispatchControllerLabelValue {
+		// Exclude EndpointSlice resources that are managed by Karmada system to avoid duplicate reporting.
+		if helper.IsEndpointSliceManagedByKarmada(eps.GetLabels()) {
 			continue
 		}
 		epsUnstructured, err := helper.ToUnstructured(eps)
@@ -415,13 +419,22 @@ func getEndpointSliceWorkMeta(ctx context.Context, c client.Client, ns string, w
 		return metav1.ObjectMeta{}, err
 	}
 
+	existFinalizers := existWork.GetFinalizers()
+	finalizersToAdd := []string{util.MCSEndpointSliceDispatchControllerFinalizer}
+	newFinalizers := util.MergeFinalizers(existFinalizers, finalizersToAdd)
+
 	ls := map[string]string{
 		util.MultiClusterServiceNamespaceLabel: endpointSlice.GetNamespace(),
 		util.MultiClusterServiceNameLabel:      endpointSlice.GetLabels()[discoveryv1.LabelServiceName],
 		util.EndpointSliceWorkManagedByLabel:   util.MultiClusterServiceKind,
 	}
 	if existWork.Labels == nil || (err != nil && apierrors.IsNotFound(err)) {
-		workMeta := metav1.ObjectMeta{Name: workName, Namespace: ns, Labels: ls}
+		workMeta := metav1.ObjectMeta{
+			Name:       workName,
+			Namespace:  ns,
+			Labels:     ls,
+			Finalizers: newFinalizers,
+		}
 		return workMeta, nil
 	}
 
@@ -436,7 +449,7 @@ func getEndpointSliceWorkMeta(ctx context.Context, c client.Client, ns string, w
 		Name:       workName,
 		Namespace:  ns,
 		Labels:     ls,
-		Finalizers: []string{util.MCSEndpointSliceDispatchControllerFinalizer},
+		Finalizers: newFinalizers,
 	}, nil
 }
 

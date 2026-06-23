@@ -123,7 +123,7 @@ var _ = ginkgo.Describe("Resource interpreter webhook testing", func() {
 					newUnstructuredObj, err := helper.ToUnstructured(curWorkload)
 					g.Expect(err).ShouldNot(gomega.HaveOccurred())
 
-					workloadGVR := workloadv1alpha1.SchemeGroupVersion.WithResource("workloads")
+					workloadGVR := schema.GroupVersion{Group: workloadv1alpha1.GroupVersion.Group, Version: workloadv1alpha1.GroupVersion.Version}.WithResource("workloads")
 					_, err = dynamicClient.Resource(workloadGVR).Namespace(curWorkload.Namespace).Update(context.TODO(), newUnstructuredObj, metav1.UpdateOptions{})
 					return err
 				}, pollTimeout, pollInterval).ShouldNot(gomega.HaveOccurred())
@@ -152,7 +152,7 @@ var _ = ginkgo.Describe("Resource interpreter webhook testing", func() {
 				sumWeight += index + 1
 				staticWeightLists = append(staticWeightLists, staticWeightList)
 			}
-			workload.Spec.Replicas = ptr.To[int32](int32(sumWeight))
+			workload.Spec.Replicas = new(int32(sumWeight))
 			policy = testhelper.NewPropagationPolicy(policyNamespace, policyName, []policyv1alpha1.ResourceSelector{
 				{
 					APIVersion: workload.APIVersion,
@@ -261,7 +261,7 @@ var _ = ginkgo.Describe("Resource interpreter webhook testing", func() {
 				}
 			}
 
-			CheckResult := func(result workv1alpha2.ResourceHealth) interface{} {
+			CheckResult := func(result workv1alpha2.ResourceHealth) any {
 				return func(g gomega.Gomega) (bool, error) {
 					rb, err := karmadaClient.WorkV1alpha2().ResourceBindings(workload.Namespace).Get(context.TODO(), resourceBindingName, metav1.GetOptions{})
 					g.Expect(err).NotTo(gomega.HaveOccurred())
@@ -499,7 +499,7 @@ end
 			})
 
 			ginkgo.By("updating dependency cr", func() {
-				patch := []map[string]interface{}{
+				patch := []map[string]any{
 					{
 						"op":    "replace",
 						"path":  "/spec/resource/namespace",
@@ -644,7 +644,9 @@ var _ = framework.SerialDescribe("Resource interpreter customization testing", f
 					expectedReplicaRequirements := &workv1alpha2.ReplicaRequirements{
 						ResourceRequest: map[corev1.ResourceName]resource.Quantity{
 							corev1.ResourceCPU: resource.MustParse("100m"),
-						}}
+						},
+						Namespace: deployment.Namespace,
+					}
 
 					gomega.Eventually(func(g gomega.Gomega) (bool, error) {
 						resourceBinding, err := karmadaClient.WorkV1alpha2().ResourceBindings(deployment.Namespace).Get(context.TODO(), resourceBindingName, metav1.GetOptions{})
@@ -696,7 +698,7 @@ var _ = framework.SerialDescribe("Resource interpreter customization testing", f
 					sumWeight += index + 1
 					staticWeightLists = append(staticWeightLists, staticWeightList)
 				}
-				deployment.Spec.Replicas = ptr.To[int32](int32(sumWeight))
+				deployment.Spec.Replicas = new(int32(sumWeight))
 				policy.Spec.Placement = policyv1alpha1.Placement{
 					ClusterAffinity: &policyv1alpha1.ClusterAffinity{
 						ClusterNames: framework.ClusterNames(),
@@ -870,7 +872,7 @@ var _ = framework.SerialDescribe("Resource interpreter customization testing", f
 					framework.WaitDeploymentStatus(clusterClient, memberDeployment, readyReplicas)
 				}
 
-				CheckResult := func(result workv1alpha2.ResourceHealth) interface{} {
+				CheckResult := func(result workv1alpha2.ResourceHealth) any {
 					return func(g gomega.Gomega) (bool, error) {
 						rb, err := karmadaClient.WorkV1alpha2().ResourceBindings(deployment.Namespace).Get(context.TODO(), resourceBindingName, metav1.GetOptions{})
 						g.Expect(err).NotTo(gomega.HaveOccurred())

@@ -28,7 +28,6 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	listappsv1 "k8s.io/client-go/listers/apps/v1"
 	listcorev1 "k8s.io/client-go/listers/core/v1"
-	"k8s.io/utils/ptr"
 )
 
 func TestGetUnschedulablePodsOfWorkload(t *testing.T) {
@@ -45,23 +44,23 @@ func TestGetUnschedulablePodsOfWorkload(t *testing.T) {
 			name: "deployment with no unschedulable pods",
 			// Create a deployment with a single pod that is properly scheduled
 			workload: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "Deployment",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "test-deployment",
 						"namespace": "default",
 						"uid":       "test-deployment-uid",
 					},
-					"spec": map[string]interface{}{
-						"selector": map[string]interface{}{
-							"matchLabels": map[string]interface{}{
+					"spec": map[string]any{
+						"selector": map[string]any{
+							"matchLabels": map[string]any{
 								"app": "test",
 							},
 						},
-						"template": map[string]interface{}{
-							"metadata": map[string]interface{}{
-								"labels": map[string]interface{}{
+						"template": map[string]any{
+							"metadata": map[string]any{
+								"labels": map[string]any{
 									"app": "test",
 								},
 							},
@@ -86,7 +85,7 @@ func TestGetUnschedulablePodsOfWorkload(t *testing.T) {
 								Kind:       "ReplicaSet",
 								Name:       "test-rs",
 								UID:        "test-rs-uid",
-								Controller: ptr.To[bool](true),
+								Controller: new(true),
 							},
 						},
 					},
@@ -118,7 +117,7 @@ func TestGetUnschedulablePodsOfWorkload(t *testing.T) {
 								Kind:       "Deployment",
 								Name:       "test-deployment",
 								UID:        "test-deployment-uid",
-								Controller: ptr.To[bool](true),
+								Controller: new(true),
 							},
 						},
 					},
@@ -147,23 +146,23 @@ func TestGetUnschedulablePodsOfWorkload(t *testing.T) {
 			name: "deployment with unschedulable pods beyond threshold",
 			// Create a deployment with a single unschedulable pod
 			workload: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "Deployment",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "test-deployment",
 						"namespace": "default",
 						"uid":       "test-deployment-uid",
 					},
-					"spec": map[string]interface{}{
-						"selector": map[string]interface{}{
-							"matchLabels": map[string]interface{}{
+					"spec": map[string]any{
+						"selector": map[string]any{
+							"matchLabels": map[string]any{
 								"app": "test",
 							},
 						},
-						"template": map[string]interface{}{
-							"metadata": map[string]interface{}{
-								"labels": map[string]interface{}{
+						"template": map[string]any{
+							"metadata": map[string]any{
+								"labels": map[string]any{
 									"app": "test",
 								},
 							},
@@ -188,7 +187,7 @@ func TestGetUnschedulablePodsOfWorkload(t *testing.T) {
 								Kind:       "ReplicaSet",
 								Name:       "test-rs",
 								UID:        "test-rs-uid",
-								Controller: ptr.To[bool](true),
+								Controller: new(true),
 							},
 						},
 					},
@@ -221,7 +220,7 @@ func TestGetUnschedulablePodsOfWorkload(t *testing.T) {
 								Kind:       "Deployment",
 								Name:       "test-deployment",
 								UID:        "test-deployment-uid",
-								Controller: ptr.To[bool](true),
+								Controller: new(true),
 							},
 						},
 					},
@@ -250,10 +249,10 @@ func TestGetUnschedulablePodsOfWorkload(t *testing.T) {
 			name: "unsupported workload kind",
 			// Create a StatefulSet workload which is not supported
 			workload: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "StatefulSet",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "test-statefulset",
 						"namespace": "default",
 					},
@@ -267,23 +266,23 @@ func TestGetUnschedulablePodsOfWorkload(t *testing.T) {
 			name: "deployment with negative threshold",
 			// Testing that negative threshold is handled correctly (should be set to 0)
 			workload: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "Deployment",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "test-deployment",
 						"namespace": "default",
 						"uid":       "test-deployment-uid",
 					},
-					"spec": map[string]interface{}{
-						"selector": map[string]interface{}{
-							"matchLabels": map[string]interface{}{
+					"spec": map[string]any{
+						"selector": map[string]any{
+							"matchLabels": map[string]any{
 								"app": "test",
 							},
 						},
-						"template": map[string]interface{}{
-							"metadata": map[string]interface{}{
-								"labels": map[string]interface{}{
+						"template": map[string]any{
+							"metadata": map[string]any{
+								"labels": map[string]any{
 									"app": "test",
 								},
 							},
@@ -308,7 +307,7 @@ func TestGetUnschedulablePodsOfWorkload(t *testing.T) {
 								Kind:       "ReplicaSet",
 								Name:       "test-rs",
 								UID:        "test-rs-uid",
-								Controller: ptr.To[bool](true),
+								Controller: new(true),
 							},
 						},
 					},
@@ -342,7 +341,7 @@ func TestGetUnschedulablePodsOfWorkload(t *testing.T) {
 								Kind:       "Deployment",
 								Name:       "test-deployment",
 								UID:        "test-deployment-uid",
-								Controller: ptr.To[bool](true),
+								Controller: new(true),
 							},
 						},
 					},

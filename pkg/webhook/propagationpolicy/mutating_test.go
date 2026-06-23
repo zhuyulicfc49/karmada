@@ -27,7 +27,6 @@ import (
 	admissionv1 "k8s.io/api/admission/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 	mcsv1alpha1 "sigs.k8s.io/mcs-api/pkg/apis/v1alpha1"
 
@@ -132,7 +131,7 @@ func TestMutatingAdmission_Handle_FullCoverage(t *testing.T) {
 			},
 			Failover: &policyv1alpha1.FailoverBehavior{
 				Application: &policyv1alpha1.ApplicationFailoverBehavior{
-					PurgeMode:          policyv1alpha1.Graciously,
+					PurgeMode:          policyv1alpha1.PurgeModeGracefully,
 					GracePeriodSeconds: nil,
 				},
 			},
@@ -172,8 +171,8 @@ func TestMutatingAdmission_Handle_FullCoverage(t *testing.T) {
 			},
 			Failover: &policyv1alpha1.FailoverBehavior{
 				Application: &policyv1alpha1.ApplicationFailoverBehavior{
-					PurgeMode:          policyv1alpha1.Graciously,
-					GracePeriodSeconds: ptr.To[int32](failOverGracePeriodSeconds),
+					PurgeMode:          policyv1alpha1.PurgeModeGracefully,
+					GracePeriodSeconds: new(failOverGracePeriodSeconds),
 				},
 			},
 		},

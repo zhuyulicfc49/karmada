@@ -28,7 +28,6 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	fakeclientset "k8s.io/client-go/kubernetes/fake"
 	clientsetscheme "k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/utils/ptr"
 
 	addoninit "github.com/karmada-io/karmada/pkg/karmadactl/addons/init"
 	addonutils "github.com/karmada-io/karmada/pkg/karmadactl/addons/utils"
@@ -52,7 +51,7 @@ func TestStatus(t *testing.T) {
 			name: "Status_WithoutDescheduler_AddonDisabledStatus",
 			listOpts: &addoninit.CommandAddonsListOption{
 				GlobalCommandOptions: addoninit.GlobalCommandOptions{
-					KubeClientSet: fakeclientset.NewSimpleClientset(),
+					KubeClientSet: fakeclientset.NewClientset(),
 				},
 			},
 			prep:       func(*addoninit.CommandAddonsListOption) error { return nil },
@@ -62,7 +61,7 @@ func TestStatus(t *testing.T) {
 			name: "Status_WithNetworkIssue_AddonUnknownStatus",
 			listOpts: &addoninit.CommandAddonsListOption{
 				GlobalCommandOptions: addoninit.GlobalCommandOptions{
-					KubeClientSet: fakeclientset.NewSimpleClientset(),
+					KubeClientSet: fakeclientset.NewClientset(),
 				},
 			},
 			prep: func(listOpts *addoninit.CommandAddonsListOption) error {
@@ -77,7 +76,7 @@ func TestStatus(t *testing.T) {
 			listOpts: &addoninit.CommandAddonsListOption{
 				GlobalCommandOptions: addoninit.GlobalCommandOptions{
 					Namespace:     namespace,
-					KubeClientSet: fakeclientset.NewSimpleClientset(),
+					KubeClientSet: fakeclientset.NewClientset(),
 				},
 			},
 			prep: func(listOpts *addoninit.CommandAddonsListOption) error {
@@ -93,7 +92,7 @@ func TestStatus(t *testing.T) {
 			listOpts: &addoninit.CommandAddonsListOption{
 				GlobalCommandOptions: addoninit.GlobalCommandOptions{
 					Namespace:     namespace,
-					KubeClientSet: fakeclientset.NewSimpleClientset(),
+					KubeClientSet: fakeclientset.NewClientset(),
 				},
 			},
 			prep: func(listOpts *addoninit.CommandAddonsListOption) error {
@@ -142,7 +141,7 @@ func TestEnableDescheduler(t *testing.T) {
 			enableOpts: &addoninit.CommandAddonsEnableOption{
 				GlobalCommandOptions: addoninit.GlobalCommandOptions{
 					Namespace:     namespace,
-					KubeClientSet: fakeclientset.NewSimpleClientset(),
+					KubeClientSet: fakeclientset.NewClientset(),
 				},
 				KarmadaDeschedulerReplicas: replicas,
 			},
@@ -177,7 +176,7 @@ func TestEnableDescheduler(t *testing.T) {
 
 func TestDisableDescheduler(t *testing.T) {
 	name, namespace := names.KarmadaDeschedulerComponentName, "test"
-	client := fakeclientset.NewSimpleClientset()
+	client := fakeclientset.NewClientset()
 	var replicas int32 = 2
 	tests := []struct {
 		name        string
@@ -250,7 +249,7 @@ func TestDisableDescheduler(t *testing.T) {
 func createKarmadaDeschedulerDeployment(c clientset.Interface, replicas int32, namespace, priorityClass string) error {
 	karmadaDeschedulerDeploymentBytes, err := addonutils.ParseTemplate(karmadaDeschedulerDeployment, DeploymentReplace{
 		Namespace:         namespace,
-		Replicas:          ptr.To[int32](replicas),
+		Replicas:          new(replicas),
 		PriorityClassName: priorityClass,
 	})
 	if err != nil {

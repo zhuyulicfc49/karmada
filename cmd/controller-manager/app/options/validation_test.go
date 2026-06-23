@@ -32,7 +32,6 @@ func New(modifyOptions ModifyOptions) Options {
 	option := Options{
 		SkippedPropagatingAPIs:       "cluster.karmada.io;policy.karmada.io;work.karmada.io",
 		ClusterStatusUpdateFrequency: metav1.Duration{Duration: 10 * time.Second},
-		ClusterLeaseDuration:         metav1.Duration{Duration: 10 * time.Second},
 		ClusterMonitorPeriod:         metav1.Duration{Duration: 10 * time.Second},
 		ClusterMonitorGracePeriod:    metav1.Duration{Duration: 10 * time.Second},
 		ClusterStartupGracePeriod:    metav1.Duration{Duration: 10 * time.Second},
@@ -77,12 +76,6 @@ func TestValidateControllerManagerConfiguration(t *testing.T) {
 			}),
 			expectedErrs: field.ErrorList{field.Invalid(newPath.Child("ClusterStatusUpdateFrequency"), metav1.Duration{Duration: -10 * time.Second}, "must be greater than 0")},
 		},
-		"invalid ClusterLeaseDuration": {
-			opt: New(func(options *Options) {
-				options.ClusterLeaseDuration.Duration = -40 * time.Second
-			}),
-			expectedErrs: field.ErrorList{field.Invalid(newPath.Child("ClusterLeaseDuration"), metav1.Duration{Duration: -40 * time.Second}, "must be greater than 0")},
-		},
 		"invalid ClusterMonitorPeriod": {
 			opt: New(func(options *Options) {
 				options.ClusterMonitorPeriod.Duration = -40 * time.Second
@@ -101,13 +94,13 @@ func TestValidateControllerManagerConfiguration(t *testing.T) {
 			}),
 			expectedErrs: field.ErrorList{field.Invalid(newPath.Child("ClusterStartupGracePeriod"), metav1.Duration{Duration: 0 * time.Second}, "must be greater than 0")},
 		},
-		"invalid FailoverOptions": {
+		"invalid ClusterFailoverOptions": {
 			opt: New(func(options *Options) {
-				options.FailoverOptions.EnableNoExecuteTaintEviction = true
-				options.FailoverOptions.NoExecuteTaintEvictionPurgeMode = ""
+				options.ClusterFailoverOptions.EnableNoExecuteTaintEviction = true
+				options.ClusterFailoverOptions.NoExecuteTaintEvictionPurgeMode = ""
 			}),
 			expectedErrs: field.ErrorList{
-				field.Invalid(field.NewPath("FailoverOptions").Child("NoExecuteTaintEvictionPurgeMode"), "", "Invalid mode"),
+				field.Invalid(field.NewPath("ClusterFailoverOptions").Child("NoExecuteTaintEvictionPurgeMode"), "", "Invalid mode"),
 			},
 		},
 	}

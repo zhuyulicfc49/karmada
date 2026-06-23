@@ -19,6 +19,7 @@ package framework
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,8 +92,12 @@ func InitClusterInformation(karmadaClient karmada.Interface, controlPlaneClient 
 	gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 	gomega.Expect(meetRequirement).Should(gomega.BeTrue())
 
+	limiterGetter := util.GetClusterRateLimiterGetter()
+	clusterClientOption := &util.ClientOption{
+		RateLimiterGetter: limiterGetter.GetRateLimiter,
+	}
 	for _, cluster := range clusters {
-		clusterClient, clusterDynamicClient, err := newClusterClientSet(controlPlaneClient, cluster)
+		clusterClient, clusterDynamicClient, err := newClusterClientSet(controlPlaneClient, cluster, clusterClientOption)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		clusterNames = append(clusterNames, cluster.Name)
 		clusterClients = append(clusterClients, clusterClient)
@@ -134,8 +139,8 @@ func fetchPullBasedClusters() (map[string]string, error) {
 
 	pullBasedClustersMap := make(map[string]string)
 	pullBasedClusters = strings.TrimSuffix(pullBasedClusters, ";")
-	clusterInfo := strings.Split(pullBasedClusters, ";")
-	for _, cluster := range clusterInfo {
+	clusterInfo := strings.SplitSeq(pullBasedClusters, ";")
+	for cluster := range clusterInfo {
 		clusterNameAndConfigPath := strings.Split(cluster, ":")
 		if len(clusterNameAndConfigPath) != 2 {
 			return nil, fmt.Errorf("failed to parse config path for cluster: %s", cluster)
@@ -194,13 +199,14 @@ func isClusterMeetRequirements(clusters []*clusterv1alpha1.Cluster) (bool, error
 	return true, nil
 }
 
-func newClusterClientSet(controlPlaneClient client.Client, c *clusterv1alpha1.Cluster) (*util.ClusterClient, *util.DynamicClusterClient, error) {
+// newClusterClientSet will create cluster client and dynamic client according to the cluster's sync mode.
+func newClusterClientSet(controlPlaneClient client.Client, c *clusterv1alpha1.Cluster, clientOption *util.ClientOption) (*util.ClusterClient, *util.DynamicClusterClient, error) {
 	if c.Spec.SyncMode == clusterv1alpha1.Push {
-		clusterClient, err := util.NewClusterClientSet(c.Name, controlPlaneClient, nil)
+		clusterClient, err := util.NewClusterClientSet(c.Name, controlPlaneClient, clientOption)
 		if err != nil {
 			return nil, nil, err
 		}
-		clusterDynamicClient, err := util.NewClusterDynamicClientSet(c.Name, controlPlaneClient, nil)
+		clusterDynamicClient, err := util.NewClusterDynamicClientSet(c.Name, controlPlaneClient, clientOption)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -211,6 +217,10 @@ func newClusterClientSet(controlPlaneClient client.Client, c *clusterv1alpha1.Cl
 	clusterConfig, err := LoadRESTClientConfig(clusterConfigPath, c.Name)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	if clientOption != nil && clientOption.RateLimiterGetter != nil {
+		clusterConfig.RateLimiter = clientOption.RateLimiterGetter(c.Name)
 	}
 
 	clusterClientSet := util.ClusterClient{ClusterName: c.Name}
@@ -257,9 +267,7 @@ func UpdateClusterLabels(client karmada.Interface, clusterName string, labels ma
 		if cluster.Labels == nil {
 			cluster.Labels = map[string]string{}
 		}
-		for key, value := range labels {
-			cluster.Labels[key] = value
-		}
+		maps.Copy(cluster.Labels, labels)
 		_, err = client.ClusterV1alpha1().Clusters().Update(context.TODO(), cluster, metav1.UpdateOptions{})
 		if err != nil {
 			return false, err

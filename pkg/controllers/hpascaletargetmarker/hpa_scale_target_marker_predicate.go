@@ -17,12 +17,15 @@ limitations under the License.
 package hpascaletargetmarker
 
 import (
+	"errors"
+
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	policyv1alpha1 "github.com/karmada-io/karmada/pkg/apis/policy/v1alpha1"
+	"github.com/karmada-io/karmada/pkg/util"
 )
 
 var _ predicate.Predicate = &HpaScaleTargetMarker{}
@@ -31,13 +34,15 @@ var _ predicate.Predicate = &HpaScaleTargetMarker{}
 func (r *HpaScaleTargetMarker) Create(e event.CreateEvent) bool {
 	hpa, ok := e.Object.(*autoscalingv2.HorizontalPodAutoscaler)
 	if !ok {
-		klog.Errorf("create predicates in hpa controller called, but obj is not hpa type")
+		err := errors.New("object is not HPA type")
+		klog.ErrorS(err, "create predicate in hpa controller failed on type assertion")
 		return false
 	}
 
 	// if hpa exist and has been propagated, add label to its scale ref resource
 	if hasBeenPropagated(hpa) {
-		r.scaleTargetWorker.Add(labelEvent{addLabelEvent, hpa})
+		priority := util.ItemPriorityIfInInitialList(e.IsInInitialList)
+		r.scaleTargetWorker.AddWithOpts(util.AddOpts{Priority: priority}, labelEvent{addLabelEvent, hpa})
 	}
 
 	return false
@@ -47,13 +52,15 @@ func (r *HpaScaleTargetMarker) Create(e event.CreateEvent) bool {
 func (r *HpaScaleTargetMarker) Update(e event.UpdateEvent) bool {
 	oldHPA, ok := e.ObjectOld.(*autoscalingv2.HorizontalPodAutoscaler)
 	if !ok {
-		klog.Errorf("update predicates in hpa controller called, but old obj is not hpa type")
+		err := errors.New("old object is not HPA type")
+		klog.ErrorS(err, "update predicate in hpa controller failed on type assertion")
 		return false
 	}
 
 	newHPA, ok := e.ObjectNew.(*autoscalingv2.HorizontalPodAutoscaler)
 	if !ok {
-		klog.Errorf("update predicates in hpa controller called, but new obj is not hpa type")
+		err := errors.New("new object is not HPA type")
+		klog.ErrorS(err, "update predicate in hpa controller failed on type assertion")
 		return false
 	}
 
@@ -75,7 +82,8 @@ func (r *HpaScaleTargetMarker) Update(e event.UpdateEvent) bool {
 func (r *HpaScaleTargetMarker) Delete(e event.DeleteEvent) bool {
 	hpa, ok := e.Object.(*autoscalingv2.HorizontalPodAutoscaler)
 	if !ok {
-		klog.Errorf("delete predicates in hpa controller called, but obj is not hpa type")
+		err := errors.New("object is not HPA type")
+		klog.ErrorS(err, "delete predicate in hpa controller failed on type assertion")
 		return false
 	}
 

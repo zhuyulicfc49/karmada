@@ -82,6 +82,7 @@ spec:
             - --audit-log-maxage=0
             - --audit-log-maxbackup=0
             - --tls-min-version=VersionTLS13
+            - --v={{ .Values.search.logVerbosity }}
             - --bind-address=$(POD_IP)
           livenessProbe:
             httpGet:

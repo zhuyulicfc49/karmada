@@ -22,8 +22,8 @@ import (
 	"net"
 	"time"
 
-	"github.com/kr/pretty"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/encoding/prototext"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -73,6 +73,7 @@ var (
 // AccurateSchedulerEstimatorServer is the gRPC server of a cluster accurate scheduler estimator.
 // Please see https://github.com/karmada-io/karmada/pull/580 (#580).
 type AccurateSchedulerEstimatorServer struct {
+	estimatorservice.UnimplementedEstimatorServer
 	clusterName       string
 	kubeClient        kubernetes.Interface
 	restMapper        meta.RESTMapper
@@ -135,6 +136,7 @@ func NewEstimatorServer(
 	estimateFramework, err := frameworkruntime.NewFramework(registry,
 		frameworkruntime.WithClientSet(kubeClient),
 		frameworkruntime.WithInformerFactory(informerFactory),
+		frameworkruntime.WithParallelism(opts.Parallelism),
 	)
 	if err != nil {
 		return es, err
@@ -202,7 +204,7 @@ func (es *AccurateSchedulerEstimatorServer) MaxAvailableReplicas(ctx context.Con
 
 	startTime := time.Now()
 
-	klog.V(4).Infof("Begin calculating cluster available replicas of resource(%s), request: %s", object, pretty.Sprint(*request))
+	klog.V(4).Infof("Begin calculating cluster available replicas of resource(%s), request: %s", object, prototext.Format(request))
 	defer func(start time.Time) {
 		metrics.CountRequests(rerr, metrics.EstimatingTypeMaxAvailableReplicas)
 		metrics.UpdateEstimatingAlgorithmLatency(rerr, metrics.EstimatingTypeMaxAvailableReplicas, metrics.EstimatingStepTotal, start)
@@ -223,6 +225,41 @@ func (es *AccurateSchedulerEstimatorServer) MaxAvailableReplicas(ctx context.Con
 	return &pb.MaxAvailableReplicasResponse{MaxReplicas: maxReplicas}, nil
 }
 
+// MaxAvailableComponentSets is the implementation of gRPC interface.
+// It returns the maximum number of complete multi-component sets (in terms of replicas) that each cluster can host.
+func (es *AccurateSchedulerEstimatorServer) MaxAvailableComponentSets(ctx context.Context, request *pb.MaxAvailableComponentSetsRequest) (response *pb.MaxAvailableComponentSetsResponse, rerr error) {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		klog.Warningf("No metadata from context.")
+	}
+	var object string
+	if m := md.Get(string(util.ContextKeyObject)); len(m) != 0 {
+		object = m[0]
+	}
+
+	startTime := time.Now()
+
+	klog.V(4).Infof("Begin calculating available component sets of resource(%s), request: %s", object, prototext.Format(request))
+	defer func(start time.Time) {
+		metrics.CountRequests(rerr, metrics.EstimatingTypeMaxAvailableComponentSets)
+		metrics.UpdateEstimatingAlgorithmLatency(rerr, metrics.EstimatingTypeMaxAvailableComponentSets, metrics.EstimatingStepTotal, start)
+		if rerr != nil {
+			klog.Errorf("Failed to calculate cluster available component sets: %v", rerr)
+			return
+		}
+		klog.V(2).Infof("Finish calculating cluster available component sets of resource(%s), max component sets: %d, time elapsed: %s", object, response.MaxSets, time.Since(start))
+	}(startTime)
+
+	if request.Cluster != es.clusterName {
+		return nil, fmt.Errorf("cluster name does not match, got: %s, desire: %s", request.Cluster, es.clusterName)
+	}
+	maxSets, err := es.EstimateComponents(ctx, object, request)
+	if err != nil {
+		return nil, fmt.Errorf("failed to estimate component sets: %v", err)
+	}
+	return &pb.MaxAvailableComponentSetsResponse{MaxSets: maxSets}, nil
+}
+
 // GetUnschedulableReplicas is the implementation of gRPC interface. It will return the
 // unschedulable replicas of a workload.
 func (es *AccurateSchedulerEstimatorServer) GetUnschedulableReplicas(ctx context.Context, request *pb.UnschedulableReplicasRequest) (response *pb.UnschedulableReplicasResponse, rerr error) {
@@ -235,7 +272,7 @@ func (es *AccurateSchedulerEstimatorServer) GetUnschedulableReplicas(ctx context
 		object = m[0]
 	}
 
-	klog.V(4).Infof("Begin detecting cluster unschedulable replicas of resource(%s), request: %s", object, pretty.Sprint(*request))
+	klog.V(4).Infof("Begin detecting cluster unschedulable replicas of resource(%s), request: %s", object, prototext.Format(request))
 	defer func(start time.Time) {
 		metrics.CountRequests(rerr, metrics.EstimatingTypeGetUnschedulableReplicas)
 		metrics.UpdateEstimatingAlgorithmLatency(rerr, metrics.EstimatingTypeGetUnschedulableReplicas, metrics.EstimatingStepTotal, start)
@@ -249,10 +286,13 @@ func (es *AccurateSchedulerEstimatorServer) GetUnschedulableReplicas(ctx context
 	if request.Cluster != es.clusterName {
 		return nil, fmt.Errorf("cluster name does not match, got: %s, desire: %s", request.Cluster, es.clusterName)
 	}
+	if request.Resource == nil {
+		return nil, fmt.Errorf("resource is nil")
+	}
 
 	// Get the workload.
 	startTime := time.Now()
-	gvk := schema.FromAPIVersionAndKind(request.Resource.APIVersion, request.Resource.Kind)
+	gvk := schema.FromAPIVersionAndKind(request.Resource.ApiVersion, request.Resource.Kind)
 	unstructObj, err := helper.GetObjectFromSingleClusterCache(es.restMapper, es.informerManager, &keys.ClusterWideKey{
 		Group:     gvk.Group,
 		Version:   gvk.Version,
@@ -267,7 +307,7 @@ func (es *AccurateSchedulerEstimatorServer) GetUnschedulableReplicas(ctx context
 
 	// List all unschedulable replicas.
 	startTime = time.Now()
-	unschedulables, err := replica.GetUnschedulablePodsOfWorkload(unstructObj, request.UnschedulableThreshold, es.replicaLister)
+	unschedulables, err := replica.GetUnschedulablePodsOfWorkload(unstructObj, time.Duration(request.UnschedulableThreshold), es.replicaLister)
 	metrics.UpdateEstimatingAlgorithmLatency(err, metrics.EstimatingTypeGetUnschedulableReplicas, metrics.EstimatingStepGetUnschedulablePodsOfWorkload, startTime)
 	if err != nil {
 		return nil, err

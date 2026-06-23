@@ -275,7 +275,10 @@ func (c *Controller) syncToClusters(ctx context.Context, clusterName string, wor
 			continue
 		}
 
-		if err = c.tryCreateOrUpdateWorkload(ctx, clusterName, workload); err != nil {
+		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			return c.tryCreateOrUpdateWorkload(ctx, clusterName, workload)
+		})
+		if err != nil {
 			klog.ErrorS(err, "Failed to create or update resource in the given member cluster", "namespace", workload.GetNamespace(), "name", workload.GetName(), "cluster", clusterName)
 			c.eventf(workload, corev1.EventTypeWarning, events.EventReasonSyncWorkloadFailed, "Failed to create or update resource(%s) in member cluster(%s): %v", klog.KObj(workload), clusterName, err)
 			errs = append(errs, err)
@@ -358,12 +361,7 @@ func (c *Controller) updateWorkDispatchingConditionIfNeeded(ctx context.Context,
 		return err
 	}
 
-	obj, err := helper.ToUnstructured(work)
-	if err != nil {
-		return err
-	}
-
-	c.eventf(obj, corev1.EventTypeNormal, events.EventReasonWorkDispatching, newWorkDispatchingCondition.Message)
+	c.EventRecorder.Eventf(work, corev1.EventTypeNormal, events.EventReasonWorkDispatching, "%s", newWorkDispatchingCondition.Message)
 	return nil
 }
 
@@ -390,7 +388,7 @@ func (c *Controller) setStatusCondition(ctx context.Context, work *workv1alpha1.
 	})
 }
 
-func (c *Controller) eventf(object *unstructured.Unstructured, eventType, reason, messageFmt string, args ...interface{}) {
+func (c *Controller) eventf(object *unstructured.Unstructured, eventType, reason, messageFmt string, args ...any) {
 	ref, err := util.GenEventRef(object)
 	if err != nil {
 		klog.ErrorS(err, "Ignore event as failed to build event reference", "reason", reason, "kind", object.GetKind(), "object", klog.KObj(object))

@@ -103,6 +103,55 @@ const (
 	// owner: @jabellard
 	// beta: v1.15
 	ContextualLogging = logsv1.ContextualLogging
+
+	// MultiplePodTemplatesScheduling enables enhanced, resource-aware scheduling for workloads with multiple pod templates.
+	// When enabled, the scheduler and resource interpreter will use the new 'GetComponents' hook and 'components' field
+	// to support accurate resource estimation and scheduling for complex CRDs (e.g., FlinkDeployments, RayJob, VolcanoJob) that consist of
+	// multiple components with different resource requirements. This allows for more precise FederatedResourceQuota
+	// calculations and better placement decisions.
+	//
+	// owner: @mszacillo, @Dyex719, @RainbowMango, @XiShanYongYe-Chang, @zhzhuang-zju, @seanlaii
+	// alpha: v1.15
+	MultiplePodTemplatesScheduling featuregate.Feature = "MultiplePodTemplatesScheduling"
+
+	// ControllerPriorityQueue controls whether the controller-runtime Priority Queue for controllers is enabled.
+	// When enabled, during the startup phase of karmada-controller-manager and karmada-agent,
+	// controllers implemented with controller-runtime will prioritize processing recent cluster changes first,
+	// while deferring items without recent updates that still need to be processed to the end of the queue.
+	// This helps the system quickly catch up with the latest state and reduces the perceived
+	// backlog from external users.
+	// However, enabling this feature may increase the overall number of reconciliations. This is
+	// because newer events spend less time in the queue, which reduces the chance of them being
+	// deduplicated before processing.
+	//
+	// owner: @zach593
+	// alpha: v1.15
+	// beta: v1.17
+	ControllerPriorityQueue featuregate.Feature = "ControllerPriorityQueue"
+
+	// WorkloadAffinity enables the scheduler to group or separate workloads across clusters
+	// based on their defined workload affinity or anti-affinity groups, which are managed
+	// via the PropagationPolicy or ClusterPropagationPolicy.
+	// When enabled, the scheduler maintains a global in-memory index of affinity groups.
+	// Based on a workload's affinity group, the scheduler filters out candidate clusters
+	// that would violate the workload's affinity settings.
+	//
+	// owner: @mszacillo, @RainbowMango, @kevin-wangzefeng
+	// alpha: v1.17
+	WorkloadAffinity featuregate.Feature = "WorkloadAffinity"
+
+	// SchedulingOvercommitProtection prevents scheduler overcommit by tracking in-flight
+	// workload assumptions. When enabled, the karmada-scheduler records each successfully
+	// scheduled workload in an in-memory assumption cache and forwards those assumed workloads
+	// to karmada-scheduler-estimator, which deducts their resource demand before computing
+	// how many additional replicas/component-sets can still be placed on each cluster.
+	// This eliminates the scheduling gap between when a workload is first placed and when its
+	// real resource consumption becomes visible in the cluster status, preventing multiple
+	// workloads from being simultaneously scheduled into the same resource slot.
+	//
+	// owner: @XiShanYongYe-Chang, @RainbowMango, @mszacillo
+	// alpha: v1.18
+	SchedulingOvercommitProtection featuregate.Feature = "SchedulingOvercommitProtection"
 )
 
 var (
@@ -128,6 +177,10 @@ var (
 		LoggingAlphaOptions:               {Default: false, PreRelease: featuregate.Alpha},
 		LoggingBetaOptions:                {Default: true, PreRelease: featuregate.Beta},
 		ContextualLogging:                 {Default: true, PreRelease: featuregate.Beta},
+		MultiplePodTemplatesScheduling:    {Default: false, PreRelease: featuregate.Alpha},
+		ControllerPriorityQueue:           {Default: true, PreRelease: featuregate.Beta},
+		WorkloadAffinity:                  {Default: false, PreRelease: featuregate.Alpha},
+		SchedulingOvercommitProtection:    {Default: false, PreRelease: featuregate.Alpha},
 	}
 )
 

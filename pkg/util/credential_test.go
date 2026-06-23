@@ -19,6 +19,7 @@ package util
 import (
 	"context"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -34,6 +35,7 @@ import (
 	"github.com/karmada-io/karmada/pkg/util/names"
 )
 
+//nolint:gocyclo
 func TestObtainCredentialsFromMemberCluster(t *testing.T) {
 	type args struct {
 		clusterKubeClient kubernetes.Interface
@@ -58,7 +60,10 @@ func TestObtainCredentialsFromMemberCluster(t *testing.T) {
 				},
 				aop: func(t *testing.T, clusterKubeClient kubernetes.Interface) func() {
 					ctx, cancel := context.WithCancel(context.TODO())
+					var wg sync.WaitGroup
+					wg.Add(1)
 					go func(clusterKubeClient kubernetes.Interface) {
+						defer wg.Done()
 						_ = wait.PollUntilContextCancel(ctx, 1*time.Second, true, func(ctx context.Context) (done bool, err error) {
 							impersonationSA, err := clusterKubeClient.CoreV1().ServiceAccounts("karmada-cluster").Get(ctx, names.GenerateServiceAccountName("impersonator"), metav1.GetOptions{})
 							if err != nil {
@@ -85,6 +90,7 @@ func TestObtainCredentialsFromMemberCluster(t *testing.T) {
 					}(clusterKubeClient)
 					return func() {
 						cancel()
+						wg.Wait()
 					}
 				},
 			},
@@ -102,7 +108,10 @@ func TestObtainCredentialsFromMemberCluster(t *testing.T) {
 				},
 				aop: func(t *testing.T, clusterKubeClient kubernetes.Interface) func() {
 					ctx, cancel := context.WithCancel(context.TODO())
+					var wg sync.WaitGroup
+					wg.Add(1)
 					go func(clusterKubeClient kubernetes.Interface) {
+						defer wg.Done()
 						_ = wait.PollUntilContextCancel(ctx, 1*time.Second, true, func(ctx context.Context) (done bool, err error) {
 							impersonationSA, err := clusterKubeClient.CoreV1().ServiceAccounts("karmada-cluster").Get(ctx, names.GenerateServiceAccountName("impersonator"), metav1.GetOptions{})
 							if err != nil {
@@ -150,6 +159,7 @@ func TestObtainCredentialsFromMemberCluster(t *testing.T) {
 					}(clusterKubeClient)
 					return func() {
 						cancel()
+						wg.Wait()
 					}
 				},
 			},
@@ -163,7 +173,7 @@ func TestObtainCredentialsFromMemberCluster(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.args.clusterKubeClient = fake.NewSimpleClientset()
+			tt.args.clusterKubeClient = fake.NewClientset()
 			if tt.args.aop != nil {
 				cancel := tt.args.aop(t, tt.args.clusterKubeClient)
 				defer cancel()
@@ -172,6 +182,22 @@ func TestObtainCredentialsFromMemberCluster(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ObtainCredentialsFromMemberCluster() error = %v, wantErr %v", err, tt.wantErr)
 				return
+			}
+			if got != nil {
+				// remove fields injected by fake client
+				got.TypeMeta = metav1.TypeMeta{}
+				got.ResourceVersion = ""
+				got.UID = ""
+				got.Generation = 0
+				got.ManagedFields = nil
+			}
+			if got1 != nil {
+				// remove fields injected by fake client
+				got1.TypeMeta = metav1.TypeMeta{}
+				got1.ResourceVersion = ""
+				got1.UID = ""
+				got1.Generation = 0
+				got1.ManagedFields = nil
 			}
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("ObtainCredentialsFromMemberCluster() got = %v, want %v", got, tt.want)
@@ -184,7 +210,7 @@ func TestObtainCredentialsFromMemberCluster(t *testing.T) {
 }
 
 func TestRegisterClusterInControllerPlane(t *testing.T) {
-	fakeClient := fake.NewSimpleClientset()
+	fakeClient := fake.NewClientset()
 	type args struct {
 		opts                             ClusterRegisterOption
 		controlPlaneKubeClient           kubernetes.Interface

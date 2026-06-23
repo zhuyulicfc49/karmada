@@ -24,7 +24,6 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/utils/ptr"
 
 	workv1alpha1 "github.com/karmada-io/karmada/pkg/apis/work/v1alpha1"
 	workv1alpha2 "github.com/karmada-io/karmada/pkg/apis/work/v1alpha2"
@@ -40,14 +39,14 @@ func TestGenEventRef(t *testing.T) {
 		{
 			name: "has metadata.uid",
 			obj: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "Deployment",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name": "demo-deployment",
 						"uid":  "9249d2e7-3169-4c5f-be82-163bd80aa3cf",
 					},
-					"spec": map[string]interface{}{
+					"spec": map[string]any{
 						"replicas": 2,
 					},
 				},
@@ -63,14 +62,14 @@ func TestGenEventRef(t *testing.T) {
 		{
 			name: "missing metadata.uid but has resourcetemplate.karmada.io/uid annotation",
 			obj: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "Deployment",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":        "demo-deployment",
-						"annotations": map[string]interface{}{"resourcetemplate.karmada.io/uid": "9249d2e7-3169-4c5f-be82-163bd80aa3cf"},
+						"annotations": map[string]any{"resourcetemplate.karmada.io/uid": "9249d2e7-3169-4c5f-be82-163bd80aa3cf"},
 					},
-					"spec": map[string]interface{}{
+					"spec": map[string]any{
 						"replicas": 2,
 					},
 				},
@@ -86,13 +85,13 @@ func TestGenEventRef(t *testing.T) {
 		{
 			name: "missing metadata.uid and metadata.annotations",
 			obj: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "Deployment",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name": "demo-deployment",
 					},
-					"spec": map[string]interface{}{
+					"spec": map[string]any{
 						"replicas": 2,
 					},
 				},
@@ -102,9 +101,9 @@ func TestGenEventRef(t *testing.T) {
 		{
 			name: "empty kind",
 			obj: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "v1",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name": "test-obj",
 						"uid":  "test-uid",
 					},
@@ -115,10 +114,10 @@ func TestGenEventRef(t *testing.T) {
 		{
 			name: "empty name",
 			obj: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "v1",
 					"kind":       "Pod",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"uid": "test-uid",
 					},
 				},
@@ -128,12 +127,12 @@ func TestGenEventRef(t *testing.T) {
 		{
 			name: "missing uid but has annotation",
 			obj: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "v1",
 					"kind":       "Pod",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name": "test-pod",
-						"annotations": map[string]interface{}{
+						"annotations": map[string]any{
 							workv1alpha2.ResourceTemplateUIDAnnotation: "annotation-uid",
 						},
 					},
@@ -165,7 +164,7 @@ func TestGenEventRef(t *testing.T) {
 
 func TestIsWorkContains(t *testing.T) {
 	deployment := unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "apps/v1",
 			"kind":       "Deployment",
 		},
@@ -173,7 +172,7 @@ func TestIsWorkContains(t *testing.T) {
 	deploymentData, _ := deployment.MarshalJSON()
 
 	service := unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "v1",
 			"kind":       "Service",
 		},
@@ -223,7 +222,7 @@ func TestIsWorkSuspendDispatching(t *testing.T) {
 			name: "dispatching is suspended",
 			work: &workv1alpha1.Work{
 				Spec: workv1alpha1.WorkSpec{
-					SuspendDispatching: ptr.To(true),
+					SuspendDispatching: new(true),
 				},
 			},
 			want: true,
@@ -232,7 +231,7 @@ func TestIsWorkSuspendDispatching(t *testing.T) {
 			name: "dispatching is not suspended",
 			work: &workv1alpha1.Work{
 				Spec: workv1alpha1.WorkSpec{
-					SuspendDispatching: ptr.To(false),
+					SuspendDispatching: new(false),
 				},
 			},
 			want: false,

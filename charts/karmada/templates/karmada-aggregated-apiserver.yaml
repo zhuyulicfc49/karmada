@@ -69,6 +69,7 @@ spec:
             - --audit-log-maxage=0
             - --audit-log-maxbackup=0
             - --tls-min-version=VersionTLS13
+            - --v={{ .Values.aggregatedApiServer.logVerbosity }}
             - --bind-address=$(POD_IP)
           resources:
             {{- toYaml .Values.aggregatedApiServer.resources | nindent 12 }}

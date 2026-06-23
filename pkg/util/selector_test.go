@@ -31,13 +31,13 @@ import (
 
 func TestResourceMatches(t *testing.T) {
 	resource := &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "v1",
 			"kind":       "Pod",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name":      "test",
 				"namespace": "default",
-				"labels": map[string]interface{}{
+				"labels": map[string]any{
 					"foo": "bar",
 				},
 			},
@@ -117,13 +117,13 @@ func TestResourceMatches(t *testing.T) {
 
 func TestResourceSelectorPriority(t *testing.T) {
 	resource := &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "v1",
 			"kind":       "Pod",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name":      "test",
 				"namespace": "default",
-				"labels": map[string]interface{}{
+				"labels": map[string]any{
 					"foo": "bar",
 				},
 			},
@@ -600,7 +600,7 @@ func TestClusterMatches(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "test field selector zone not matched",
+			name: "test field selector zone partially matched",
 			affinity: policyv1alpha1.ClusterAffinity{
 				ClusterNames: []string{cluster.Name},
 				FieldSelector: &policyv1alpha1.FieldSelector{
@@ -621,7 +621,7 @@ func TestClusterMatches(t *testing.T) {
 					},
 				},
 			},
-			want: false,
+			want: true,
 		},
 		{
 			name: "test field selector region matched",
@@ -774,13 +774,13 @@ func TestClusterMatches(t *testing.T) {
 
 func TestResourceMatchSelectors(t *testing.T) {
 	resource := &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "v1",
 			"kind":       "Pod",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name":      "test",
 				"namespace": "default",
-				"labels": map[string]interface{}{
+				"labels": map[string]any{
 					"foo": "bar",
 				},
 			},
@@ -853,13 +853,13 @@ func TestResourceMatchSelectors(t *testing.T) {
 
 func TestResourceMatchSelectorsPriority(t *testing.T) {
 	resource := &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "v1",
 			"kind":       "Pod",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name":      "test",
 				"namespace": "default",
-				"labels": map[string]interface{}{
+				"labels": map[string]any{
 					"foo": "bar",
 				},
 			},
@@ -1009,14 +1009,14 @@ func Test_matchZones(t *testing.T) {
 			matched: false,
 		},
 		{
-			name: "partial zones for In operator",
+			name: "overlapping zones for In operator",
 			zoneMatchExpression: &corev1.NodeSelectorRequirement{
 				Key:      ZoneField,
 				Operator: corev1.NodeSelectorOpIn,
 				Values:   []string{"foo"},
 			},
 			zones:   []string{"foo", "bar"},
-			matched: false,
+			matched: true,
 		},
 		{
 			name: "all zones for In operator",
@@ -1083,6 +1083,152 @@ func Test_matchZones(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := matchZones(tt.zoneMatchExpression, tt.zones); got != tt.matched {
 				t.Errorf("matchZones() got %v, but expected %v", got, tt.matched)
+			}
+		})
+	}
+}
+
+func TestExtractUniqueNamespacedSelectors(t *testing.T) {
+	tests := []struct {
+		name      string
+		selectors []policyv1alpha1.ResourceSelector
+		want      []policyv1alpha1.ResourceSelector
+	}{
+		{
+			name:      "empty selectors",
+			selectors: nil,
+			want:      nil,
+		},
+		{
+			name: "single selector",
+			selectors: []policyv1alpha1.ResourceSelector{
+				{
+					APIVersion: "v1",
+					Kind:       "Pod",
+				},
+			},
+			want: []policyv1alpha1.ResourceSelector{
+				{
+					APIVersion: "v1",
+					Kind:       "Pod",
+				},
+			},
+		},
+		{
+			name: "multiple different selectors",
+			selectors: []policyv1alpha1.ResourceSelector{
+				{
+					APIVersion: "v1",
+					Kind:       "Pod",
+				},
+				{
+					APIVersion: "apps/v1",
+					Kind:       "Deployment",
+				},
+				{
+					APIVersion: "v1",
+					Kind:       "Service",
+				},
+			},
+			want: []policyv1alpha1.ResourceSelector{
+				{
+					APIVersion: "v1",
+					Kind:       "Pod",
+				},
+				{
+					APIVersion: "apps/v1",
+					Kind:       "Deployment",
+				},
+				{
+					APIVersion: "v1",
+					Kind:       "Service",
+				},
+			},
+		},
+		{
+			name: "duplicate selectors should be deduplicated",
+			selectors: []policyv1alpha1.ResourceSelector{
+				{
+					APIVersion: "v1",
+					Kind:       "Pod",
+				},
+				{
+					APIVersion: "apps/v1",
+					Kind:       "Deployment",
+				},
+				{
+					APIVersion: "v1",
+					Kind:       "Pod", // duplicate
+				},
+				{
+					APIVersion: "apps/v1",
+					Kind:       "Deployment", // duplicate
+				},
+			},
+			want: []policyv1alpha1.ResourceSelector{
+				{
+					APIVersion: "v1",
+					Kind:       "Pod",
+				},
+				{
+					APIVersion: "apps/v1",
+					Kind:       "Deployment",
+				},
+			},
+		},
+		{
+			name: "selectors with same kind but different API versions",
+			selectors: []policyv1alpha1.ResourceSelector{
+				{
+					APIVersion: "extensions/v1beta1",
+					Kind:       "Deployment",
+				},
+				{
+					APIVersion: "apps/v1",
+					Kind:       "Deployment",
+				},
+			},
+			want: []policyv1alpha1.ResourceSelector{
+				{
+					APIVersion: "extensions/v1beta1",
+					Kind:       "Deployment",
+				},
+				{
+					APIVersion: "apps/v1",
+					Kind:       "Deployment",
+				},
+			},
+		},
+		{
+			name: "selectors with custom resources",
+			selectors: []policyv1alpha1.ResourceSelector{
+				{
+					APIVersion: "custom.io/v1alpha1",
+					Kind:       "CustomResource",
+				},
+				{
+					APIVersion: "example.com/v1beta1",
+					Kind:       "ExampleResource",
+				},
+			},
+			want: []policyv1alpha1.ResourceSelector{
+				{
+					APIVersion: "custom.io/v1alpha1",
+					Kind:       "CustomResource",
+				},
+				{
+					APIVersion: "example.com/v1beta1",
+					Kind:       "ExampleResource",
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ExtractUniqueNamespacedSelectors(tt.selectors)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("ExtractUniqueNamespacedSelectors() = %v, want %v", got, tt.want)
 			}
 		})
 	}

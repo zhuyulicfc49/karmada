@@ -87,10 +87,10 @@ func Test_reflectPodDisruptionBudgetStatus(t *testing.T) {
 		{
 			name: "PDB without status",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "policy/v1",
 					"kind":       "PodDisruptionBudget",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "test-pdb",
 						"namespace": "test-ns",
 					},
@@ -102,10 +102,10 @@ func Test_reflectPodDisruptionBudgetStatus(t *testing.T) {
 		{
 			name: "PDB with invalid status format",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "policy/v1",
 					"kind":       "PodDisruptionBudget",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "test-pdb",
 						"namespace": "test-ns",
 					},
@@ -175,10 +175,10 @@ func Test_reflectHorizontalPodAutoscalerStatus(t *testing.T) {
 		{
 			name: "HPA without status",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "autoscaling/v2",
 					"kind":       "HorizontalPodAutoscaler",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "test-hpa",
 						"namespace": "test-ns",
 					},
@@ -190,10 +190,10 @@ func Test_reflectHorizontalPodAutoscalerStatus(t *testing.T) {
 		{
 			name: "HPA with invalid status format",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "autoscaling/v2",
 					"kind":       "HorizontalPodAutoscaler",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "test-hpa",
 						"namespace": "test-ns",
 					},
@@ -233,15 +233,15 @@ func Test_reflectWholeStatus(t *testing.T) {
 		{
 			name: "object with valid status",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
-					"status": map[string]interface{}{
+				Object: map[string]any{
+					"status": map[string]any{
 						"key": "value",
 						"num": int64(1),
 					},
 				},
 			},
 			want: func() *runtime.RawExtension {
-				status := map[string]interface{}{
+				status := map[string]any{
 					"key": "value",
 					"num": int64(1),
 				}
@@ -253,7 +253,7 @@ func Test_reflectWholeStatus(t *testing.T) {
 		{
 			name: "object without status",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{},
+				Object: map[string]any{},
 			},
 			want:    nil,
 			wantErr: false,
@@ -261,7 +261,7 @@ func Test_reflectWholeStatus(t *testing.T) {
 		{
 			name: "object with invalid status format",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"status": "invalid",
 				},
 			},
@@ -297,6 +297,11 @@ func Test_getAllDefaultReflectStatusInterpreter(t *testing.T) {
 		{
 			name:   "Deployment interpreter exists",
 			gvk:    appsv1.SchemeGroupVersion.WithKind(util.DeploymentKind),
+			wantFn: true,
+		},
+		{
+			name:   "ReplicaSet interpreter exists",
+			gvk:    appsv1.SchemeGroupVersion.WithKind(util.ReplicaSetKind),
 			wantFn: true,
 		},
 		{
@@ -357,7 +362,7 @@ func Test_getAllDefaultReflectStatusInterpreter(t *testing.T) {
 	}
 
 	// Verify total number of interpreters
-	assert.Len(t, interpreters, 8, "unexpected number of interpreters")
+	assert.Len(t, interpreters, 9, "unexpected number of interpreters")
 
 	// Verify map is not nil
 	assert.NotNil(t, interpreters, "interpreters map should not be nil")
@@ -473,6 +478,114 @@ func Test_reflectDeploymentStatus(t *testing.T) {
 	}
 }
 
+func Test_reflectReplicaSetStatus(t *testing.T) {
+	validReplicaSet := &appsv1.ReplicaSet{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "ReplicaSet",
+			APIVersion: appsv1.SchemeGroupVersion.String(),
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "test-replicaset",
+			Namespace:  "test-ns",
+			Generation: 2,
+			Annotations: map[string]string{
+				workv1alpha2.ResourceTemplateGenerationAnnotationKey: "1",
+			},
+		},
+		Status: appsv1.ReplicaSetStatus{
+			Replicas:           3,
+			ReadyReplicas:      3,
+			AvailableReplicas:  3,
+			ObservedGeneration: 2,
+		},
+	}
+
+	tests := []struct {
+		name       string
+		replicaSet *appsv1.ReplicaSet
+		modifyFunc func(*unstructured.Unstructured)
+		want       *runtime.RawExtension
+		wantErr    bool
+	}{
+		{
+			name:       "replicaset with valid status and generation annotation",
+			replicaSet: validReplicaSet.DeepCopy(),
+			want: func() *runtime.RawExtension {
+				wantStatus := &WrappedReplicaSetStatus{
+					FederatedGeneration: FederatedGeneration{
+						Generation:                 2,
+						ResourceTemplateGeneration: 1,
+					},
+					ReplicaSetStatus: validReplicaSet.Status,
+				}
+				raw, _ := helper.BuildStatusRawExtension(wantStatus)
+				return raw
+			}(),
+			wantErr: false,
+		},
+		{
+			name:       "replicaset without status field",
+			replicaSet: validReplicaSet.DeepCopy(),
+			modifyFunc: func(u *unstructured.Unstructured) {
+				delete(u.Object, "status")
+			},
+			want:    nil,
+			wantErr: false,
+		},
+		{
+			name:       "replicaset with invalid generation annotation",
+			replicaSet: validReplicaSet.DeepCopy(),
+			modifyFunc: func(u *unstructured.Unstructured) {
+				annotations := u.GetAnnotations()
+				annotations[workv1alpha2.ResourceTemplateGenerationAnnotationKey] = "invalid"
+				u.SetAnnotations(annotations)
+			},
+			want:    nil,
+			wantErr: true,
+		},
+		{
+			name:       "replicaset without generation annotation",
+			replicaSet: validReplicaSet.DeepCopy(),
+			modifyFunc: func(u *unstructured.Unstructured) {
+				annotations := u.GetAnnotations()
+				delete(annotations, workv1alpha2.ResourceTemplateGenerationAnnotationKey)
+				u.SetAnnotations(annotations)
+			},
+			want:    nil,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Convert replicaset to unstructured
+			unstrObj, err := helper.ToUnstructured(tt.replicaSet)
+			require.NoError(t, err, "Failed to convert replicaset to unstructured")
+
+			// Apply modifications if specified
+			if tt.modifyFunc != nil {
+				tt.modifyFunc(unstrObj)
+			}
+
+			got, err := reflectReplicaSetStatus(unstrObj)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+
+			if tt.want == nil {
+				assert.Nil(t, got)
+				return
+			}
+
+			assert.NotNil(t, got)
+			assert.JSONEq(t, string(tt.want.Raw), string(got.Raw))
+		})
+	}
+}
+
 func Test_reflectServiceStatus(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -483,8 +596,8 @@ func Test_reflectServiceStatus(t *testing.T) {
 		{
 			name: "non-LoadBalancer service should return nil",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
-					"spec": map[string]interface{}{
+				Object: map[string]any{
+					"spec": map[string]any{
 						"type": "ClusterIP",
 					},
 				},
@@ -495,8 +608,8 @@ func Test_reflectServiceStatus(t *testing.T) {
 		{
 			name: "LoadBalancer service without status should return nil",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
-					"spec": map[string]interface{}{
+				Object: map[string]any{
+					"spec": map[string]any{
 						"type": "LoadBalancer",
 					},
 				},
@@ -507,14 +620,14 @@ func Test_reflectServiceStatus(t *testing.T) {
 		{
 			name: "LoadBalancer service with status should return status",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
-					"spec": map[string]interface{}{
+				Object: map[string]any{
+					"spec": map[string]any{
 						"type": "LoadBalancer",
 					},
-					"status": map[string]interface{}{
-						"loadBalancer": map[string]interface{}{
-							"ingress": []interface{}{
-								map[string]interface{}{
+					"status": map[string]any{
+						"loadBalancer": map[string]any{
+							"ingress": []any{
+								map[string]any{
 									"ip": "192.0.2.1",
 								},
 							},
@@ -540,8 +653,8 @@ func Test_reflectServiceStatus(t *testing.T) {
 		{
 			name: "invalid status format should return error",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
-					"spec": map[string]interface{}{
+				Object: map[string]any{
+					"spec": map[string]any{
 						"type": "LoadBalancer",
 					},
 					"status": "invalid",
@@ -597,7 +710,7 @@ func Test_reflectIngressStatus(t *testing.T) {
 		{
 			name: "ingress without status",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{},
+				Object: map[string]any{},
 			},
 			want:    nil,
 			wantErr: false,
@@ -605,7 +718,7 @@ func Test_reflectIngressStatus(t *testing.T) {
 		{
 			name: "ingress with invalid status",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"status": "invalid",
 				},
 			},
@@ -671,7 +784,7 @@ func Test_reflectJobStatus(t *testing.T) {
 		{
 			name: "job without status",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{},
+				Object: map[string]any{},
 			},
 			want:    nil,
 			wantErr: false,
@@ -679,8 +792,8 @@ func Test_reflectJobStatus(t *testing.T) {
 		{
 			name: "job with invalid status type",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
-					"status": map[string]interface{}{
+				Object: map[string]any{
+					"status": map[string]any{
 						"active": "invalid",
 					},
 				},
@@ -776,7 +889,7 @@ func Test_reflectJobStatus(t *testing.T) {
 		{
 			name: "job with invalid status field",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"status": "invalid",
 				},
 			},
@@ -904,14 +1017,14 @@ func Test_reflectDaemonSetStatus(t *testing.T) {
 			name: "daemonset without status field",
 			object: func() *unstructured.Unstructured {
 				obj := &unstructured.Unstructured{
-					Object: map[string]interface{}{
+					Object: map[string]any{
 						"apiVersion": "apps/v1",
 						"kind":       "DaemonSet",
-						"metadata": map[string]interface{}{
+						"metadata": map[string]any{
 							"name":       "test-daemonset",
 							"namespace":  "test-ns",
 							"generation": int64(1),
-							"annotations": map[string]interface{}{
+							"annotations": map[string]any{
 								workv1alpha2.ResourceTemplateGenerationAnnotationKey: "1",
 							},
 						},
@@ -926,18 +1039,18 @@ func Test_reflectDaemonSetStatus(t *testing.T) {
 			name: "daemonset with invalid generation annotation",
 			object: func() *unstructured.Unstructured {
 				obj := &unstructured.Unstructured{
-					Object: map[string]interface{}{
+					Object: map[string]any{
 						"apiVersion": "apps/v1",
 						"kind":       "DaemonSet",
-						"metadata": map[string]interface{}{
+						"metadata": map[string]any{
 							"name":       "test-daemonset",
 							"namespace":  "test-ns",
 							"generation": int64(1),
-							"annotations": map[string]interface{}{
+							"annotations": map[string]any{
 								workv1alpha2.ResourceTemplateGenerationAnnotationKey: "invalid",
 							},
 						},
-						"status": map[string]interface{}{
+						"status": map[string]any{
 							"currentNumberScheduled": int64(1),
 							"numberReady":            int64(1),
 						},
@@ -952,13 +1065,13 @@ func Test_reflectDaemonSetStatus(t *testing.T) {
 			name: "daemonset with invalid status format",
 			object: func() *unstructured.Unstructured {
 				return &unstructured.Unstructured{
-					Object: map[string]interface{}{
+					Object: map[string]any{
 						"apiVersion": "apps/v1",
 						"kind":       "DaemonSet",
-						"metadata": map[string]interface{}{
+						"metadata": map[string]any{
 							"name":      "test-daemonset",
 							"namespace": "test-ns",
-							"annotations": map[string]interface{}{
+							"annotations": map[string]any{
 								workv1alpha2.ResourceTemplateGenerationAnnotationKey: "1",
 							},
 						},
@@ -973,14 +1086,14 @@ func Test_reflectDaemonSetStatus(t *testing.T) {
 			name: "daemonset without generation annotation",
 			object: func() *unstructured.Unstructured {
 				return &unstructured.Unstructured{
-					Object: map[string]interface{}{
+					Object: map[string]any{
 						"apiVersion": "apps/v1",
 						"kind":       "DaemonSet",
-						"metadata": map[string]interface{}{
+						"metadata": map[string]any{
 							"name":      "test-daemonset",
 							"namespace": "test-ns",
 						},
-						"status": map[string]interface{}{
+						"status": map[string]any{
 							"currentNumberScheduled": int64(1),
 						},
 					},
@@ -1067,14 +1180,14 @@ func Test_reflectStatefulSetStatus(t *testing.T) {
 			name: "statefulset without status field",
 			object: func() *unstructured.Unstructured {
 				obj := &unstructured.Unstructured{
-					Object: map[string]interface{}{
+					Object: map[string]any{
 						"apiVersion": "apps/v1",
 						"kind":       "StatefulSet",
-						"metadata": map[string]interface{}{
+						"metadata": map[string]any{
 							"name":       "test-statefulset",
 							"namespace":  "test-ns",
 							"generation": int64(1),
-							"annotations": map[string]interface{}{
+							"annotations": map[string]any{
 								workv1alpha2.ResourceTemplateGenerationAnnotationKey: "1",
 							},
 						},
@@ -1089,13 +1202,13 @@ func Test_reflectStatefulSetStatus(t *testing.T) {
 			name: "statefulset with invalid status format",
 			object: func() *unstructured.Unstructured {
 				return &unstructured.Unstructured{
-					Object: map[string]interface{}{
+					Object: map[string]any{
 						"apiVersion": "apps/v1",
 						"kind":       "StatefulSet",
-						"metadata": map[string]interface{}{
+						"metadata": map[string]any{
 							"name":      "test-statefulset",
 							"namespace": "test-ns",
-							"annotations": map[string]interface{}{
+							"annotations": map[string]any{
 								workv1alpha2.ResourceTemplateGenerationAnnotationKey: "1",
 							},
 						},
@@ -1153,14 +1266,14 @@ func Test_reflectStatefulSetStatus(t *testing.T) {
 			name: "statefulset with no annotations",
 			object: func() *unstructured.Unstructured {
 				return &unstructured.Unstructured{
-					Object: map[string]interface{}{
+					Object: map[string]any{
 						"apiVersion": "apps/v1",
 						"kind":       "StatefulSet",
-						"metadata": map[string]interface{}{
+						"metadata": map[string]any{
 							"name":      "test-statefulset",
 							"namespace": "test-ns",
 						},
-						"status": map[string]interface{}{
+						"status": map[string]any{
 							"replicas":        int64(1),
 							"readyReplicas":   int64(1),
 							"currentReplicas": int64(1),

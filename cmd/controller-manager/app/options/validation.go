@@ -37,9 +37,6 @@ func (o *Options) Validate() field.ErrorList {
 	if o.ClusterStatusUpdateFrequency.Duration <= 0 {
 		errs = append(errs, field.Invalid(newPath.Child("ClusterStatusUpdateFrequency"), o.ClusterStatusUpdateFrequency, "must be greater than 0"))
 	}
-	if o.ClusterLeaseDuration.Duration <= 0 {
-		errs = append(errs, field.Invalid(newPath.Child("ClusterLeaseDuration"), o.ClusterLeaseDuration, "must be greater than 0"))
-	}
 	if o.ClusterMonitorPeriod.Duration <= 0 {
 		errs = append(errs, field.Invalid(newPath.Child("ClusterMonitorPeriod"), o.ClusterMonitorPeriod, "must be greater than 0"))
 	}
@@ -56,7 +53,7 @@ func (o *Options) Validate() field.ErrorList {
 	}
 
 	errs = append(errs, o.FederatedResourceQuotaOptions.Validate()...)
-	errs = append(errs, o.FailoverOptions.Validate()...)
+	errs = append(errs, o.ClusterFailoverOptions.Validate()...)
 
 	return errs
 }

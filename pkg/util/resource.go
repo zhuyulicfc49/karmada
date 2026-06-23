@@ -17,6 +17,7 @@ limitations under the License.
 package util
 
 import (
+	"maps"
 	"math"
 
 	corev1 "k8s.io/api/core/v1"
@@ -72,6 +73,25 @@ func (r *Resource) Add(rl corev1.ResourceList) {
 	}
 }
 
+// Multiply is used to multiply a resource by a factor.
+func (r *Resource) Multiply(factor int64) *Resource {
+	if r == nil {
+		return r
+	}
+
+	r.MilliCPU = r.MilliCPU * factor
+	r.Memory = r.Memory * factor
+	r.EphemeralStorage = r.EphemeralStorage * factor
+	r.AllowedPodNumber = r.AllowedPodNumber * factor
+
+	for rName, rScalar := range r.ScalarResources {
+		if lifted.IsScalarResourceName(rName) {
+			r.ScalarResources[rName] = rScalar * factor
+		}
+	}
+	return r
+}
+
 // SubResource is used to subtract two resources, if r < rr, set r to zero.
 func (r *Resource) SubResource(rr *Resource) *Resource {
 	if r == nil || rr == nil {
@@ -92,6 +112,31 @@ func (r *Resource) SubResource(rr *Resource) *Resource {
 		}
 	}
 	return r
+}
+
+// Allocatable checks if r can satisfy rr.
+func (r *Resource) Allocatable(rr *Resource) bool {
+	if rr == nil {
+		return true
+	}
+	if r == nil {
+		return false
+	}
+
+	if r.MilliCPU < rr.MilliCPU || r.Memory < rr.Memory || r.EphemeralStorage < rr.EphemeralStorage || r.AllowedPodNumber < rr.AllowedPodNumber {
+		return false
+	}
+
+	for rrName, rrScalar := range rr.ScalarResources {
+		if lifted.IsScalarResourceName(rrName) {
+			rScalar, ok := r.ScalarResources[rrName]
+			if !ok || rScalar < rrScalar {
+				return false
+			}
+		}
+	}
+
+	return true
 }
 
 // SetMaxResource compares with ResourceList and takes max value for each Resource.
@@ -280,9 +325,7 @@ func (r *Resource) Clone() *Resource {
 	}
 	if r.ScalarResources != nil {
 		res.ScalarResources = make(map[corev1.ResourceName]int64)
-		for k, v := range r.ScalarResources {
-			res.ScalarResources[k] = v
-		}
+		maps.Copy(res.ScalarResources, r.ScalarResources)
 	}
 	return res
 }

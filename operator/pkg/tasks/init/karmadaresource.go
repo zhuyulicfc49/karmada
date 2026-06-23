@@ -112,8 +112,8 @@ func runCrds(r workflow.RunData) error {
 		return err
 	}
 
-	if err := createCrds(crdsClient, crdsPath); err != nil {
-		return fmt.Errorf("failed to create karmada crds, err: %w", err)
+	if err := applyCrds(crdsClient, crdsPath); err != nil {
+		return fmt.Errorf("failed to apply karmada crds, err: %w", err)
 	}
 
 	cert := data.GetCert(constants.CaCertAndKeyName)
@@ -130,7 +130,7 @@ func runCrds(r workflow.RunData) error {
 	return nil
 }
 
-func createCrds(crdsClient *crdsclient.Clientset, crdsPath string) error {
+func applyCrds(crdsClient *crdsclient.Clientset, crdsPath string) error {
 	for _, file := range util.ListFileWithSuffix(crdsPath, ".yaml") {
 		crdBytes, err := util.ReadYamlFile(file.AbsPath)
 		if err != nil {
@@ -142,7 +142,7 @@ func createCrds(crdsClient *crdsclient.Clientset, crdsPath string) error {
 			klog.ErrorS(err, "error when converting json byte to apiExtensionsV1 CustomResourceDefinition struct")
 			return err
 		}
-		if err := apiclient.CreateCustomResourceDefinitionIfNeed(crdsClient, &obj); err != nil {
+		if err := apiclient.ApplyCRD(crdsClient, &obj); err != nil {
 			return err
 		}
 	}
@@ -206,7 +206,7 @@ func runWebhookConfiguration(r workflow.RunData) error {
 func runAPIService(r workflow.RunData) error {
 	data, ok := r.(InitData)
 	if !ok {
-		return errors.New("webhookConfiguration task invoked with an invalid data struct")
+		return errors.New("APIService task invoked with an invalid data struct")
 	}
 
 	config := data.ControlplaneConfig()

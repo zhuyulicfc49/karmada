@@ -34,6 +34,7 @@ import (
 	secretutil "sigs.k8s.io/cluster-api/util/secret"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/karmada-io/karmada/pkg/features"
 	"github.com/karmada-io/karmada/pkg/karmadactl/join"
 	"github.com/karmada-io/karmada/pkg/karmadactl/options"
 	"github.com/karmada-io/karmada/pkg/karmadactl/unjoin"
@@ -62,7 +63,7 @@ type ClusterDetector struct {
 	ClusterAPIClient      client.Client
 	InformerManager       genericmanager.SingleClusterInformerManager
 	EventHandler          cache.ResourceEventHandler
-	Processor             util.AsyncWorker
+	Processor             util.AsyncPriorityWorker
 	ConcurrentReconciles  int
 }
 
@@ -72,9 +73,10 @@ func (d *ClusterDetector) Start(ctx context.Context) error {
 
 	d.EventHandler = fedinformer.NewHandlerOnEvents(d.OnAdd, d.OnUpdate, d.OnDelete)
 	workerOptions := util.Options{
-		Name:          "cluster-api cluster detector",
-		KeyFunc:       ClusterWideKeyFunc,
-		ReconcileFunc: d.Reconcile,
+		Name:             "cluster-api cluster detector",
+		KeyFunc:          ClusterWideKeyFunc,
+		ReconcileFunc:    d.Reconcile,
+		UsePriorityQueue: features.FeatureGate.Enabled(features.ControllerPriorityQueue),
 	}
 	d.Processor = util.NewAsyncWorker(workerOptions)
 	d.Processor.Run(ctx, d.ConcurrentReconciles)
@@ -97,22 +99,30 @@ func (d *ClusterDetector) discoveryCluster() {
 }
 
 // OnAdd handles object add event and push the object to queue.
-func (d *ClusterDetector) OnAdd(obj interface{}) {
+func (d *ClusterDetector) OnAdd(obj any, isInInitialList bool) {
 	runtimeObj, ok := obj.(runtime.Object)
 	if !ok {
 		return
 	}
-	d.Processor.Enqueue(runtimeObj)
+	priority := util.ItemPriorityIfInInitialList(isInInitialList)
+	d.Processor.EnqueueWithOpts(util.AddOpts{Priority: priority}, runtimeObj)
 }
 
 // OnUpdate handles object update event and push the object to queue.
-func (d *ClusterDetector) OnUpdate(_, newObj interface{}) {
-	d.OnAdd(newObj)
+func (d *ClusterDetector) OnUpdate(_, newObj any) {
+	d.OnAdd(newObj, false)
 }
 
 // OnDelete handles object delete event and push the object to queue.
-func (d *ClusterDetector) OnDelete(obj interface{}) {
-	d.OnAdd(obj)
+func (d *ClusterDetector) OnDelete(obj any) {
+	if tombstone, ok := obj.(cache.DeletedFinalStateUnknown); ok {
+		obj = tombstone.Obj
+		if obj == nil {
+			klog.Warningf("Failed to get object(%s) from tombstone", tombstone.Key)
+			return
+		}
+	}
+	d.OnAdd(obj, false)
 }
 
 // Reconcile performs a full reconciliation for the object referred to by the key.

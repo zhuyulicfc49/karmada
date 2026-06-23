@@ -2,30 +2,62 @@
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**  *generated with [DocToc](https://github.com/thlorenz/doctoc)*
 
+- [v1.13.10](#v11310)
+  - [Downloads for v1.13.10](#downloads-for-v11310)
+  - [Changelog since v1.13.9](#changelog-since-v1139)
+    - [Changes by Kind](#changes-by-kind)
+      - [Bug Fixes](#bug-fixes)
+- [v1.13.9](#v1139)
+  - [Downloads for v1.13.9](#downloads-for-v1139)
+  - [Changelog since v1.13.8](#changelog-since-v1138)
+    - [Changes by Kind](#changes-by-kind-1)
+      - [Bug Fixes](#bug-fixes-1)
+      - [Others](#others)
+- [v1.13.8](#v1138)
+  - [Downloads for v1.13.8](#downloads-for-v1138)
+  - [Changelog since v1.13.7](#changelog-since-v1137)
+    - [Changes by Kind](#changes-by-kind-2)
+      - [Bug Fixes](#bug-fixes-2)
+- [v1.13.7](#v1137)
+  - [Downloads for v1.13.7](#downloads-for-v1137)
+  - [Changelog since v1.13.6](#changelog-since-v1136)
+    - [Changes by Kind](#changes-by-kind-3)
+      - [Bug Fixes](#bug-fixes-3)
+- [v1.13.6](#v1136)
+  - [Downloads for v1.13.6](#downloads-for-v1136)
+  - [Changelog since v1.13.5](#changelog-since-v1135)
+    - [Changes by Kind](#changes-by-kind-4)
+      - [Bug Fixes](#bug-fixes-4)
+- [v1.13.5](#v1135)
+  - [Downloads for v1.13.5](#downloads-for-v1135)
+  - [Changelog since v1.13.4](#changelog-since-v1134)
+    - [Changes by Kind](#changes-by-kind-5)
+      - [Bug Fixes](#bug-fixes-5)
+      - [Others](#others-1)
 - [v1.13.4](#v1134)
   - [Downloads for v1.13.4](#downloads-for-v1134)
   - [Changelog since v1.13.3](#changelog-since-v1133)
-    - [Changes by Kind](#changes-by-kind)
-      - [Bug Fixes](#bug-fixes)
-      - [Others](#others)
+    - [Changes by Kind](#changes-by-kind-6)
+      - [Bug Fixes](#bug-fixes-6)
+      - [Others](#others-2)
 - [v1.13.3](#v1133)
   - [Downloads for v1.13.3](#downloads-for-v1133)
   - [Changelog since v1.13.2](#changelog-since-v1132)
-    - [Changes by Kind](#changes-by-kind-1)
-      - [Bug Fixes](#bug-fixes-1)
-      - [Others](#others-1)
+    - [Changes by Kind](#changes-by-kind-7)
+      - [Bug Fixes](#bug-fixes-7)
+      - [Others](#others-3)
 - [v1.13.2](#v1132)
   - [Downloads for v1.13.2](#downloads-for-v1132)
   - [Changelog since v1.13.1](#changelog-since-v1131)
-    - [Changes by Kind](#changes-by-kind-2)
-      - [Bug Fixes](#bug-fixes-2)
-      - [Others](#others-2)
+    - [Changes by Kind](#changes-by-kind-8)
+      - [Bug Fixes](#bug-fixes-8)
+      - [Others](#others-4)
 - [v1.13.1](#v1131)
   - [Downloads for v1.13.1](#downloads-for-v1131)
   - [Changelog since v1.13.0](#changelog-since-v1130)
-    - [Changes by Kind](#changes-by-kind-3)
-      - [Bug Fixes](#bug-fixes-3)
-      - [Others](#others-3)
+    - [Changes by Kind](#changes-by-kind-9)
+      - [Bug Fixes](#bug-fixes-9)
+      - [Others](#others-5)
 - [v1.13.0](#v1130)
   - [Downloads for v1.13.0](#downloads-for-v1130)
   - [Urgent Update Notes](#urgent-update-notes)
@@ -38,7 +70,7 @@
   - [Other Notable Changes](#other-notable-changes)
     - [API Changes](#api-changes)
     - [Deprecation](#deprecation)
-    - [Bug Fixes](#bug-fixes-4)
+    - [Bug Fixes](#bug-fixes-10)
     - [Security](#security)
     - [Features & Enhancements](#features--enhancements)
   - [Other](#other)
@@ -50,11 +82,11 @@
   - [Downloads for v1.13.0-rc.0](#downloads-for-v1130-rc0)
   - [Changelog since v1.13.0-beta.0](#changelog-since-v1130-beta0)
   - [Urgent Update Notes](#urgent-update-notes-1)
-  - [Changes by Kind](#changes-by-kind-4)
+  - [Changes by Kind](#changes-by-kind-10)
     - [API Changes](#api-changes-1)
     - [Features & Enhancements](#features--enhancements-1)
     - [Deprecation](#deprecation-1)
-    - [Bug Fixes](#bug-fixes-5)
+    - [Bug Fixes](#bug-fixes-11)
     - [Security](#security-1)
   - [Other](#other-1)
     - [Dependencies](#dependencies-1)
@@ -64,11 +96,11 @@
   - [Downloads for v1.13.0-beta.0](#downloads-for-v1130-beta0)
   - [Changelog since v1.13.0-alpha.2](#changelog-since-v1130-alpha2)
   - [Urgent Update Notes](#urgent-update-notes-2)
-  - [Changes by Kind](#changes-by-kind-5)
+  - [Changes by Kind](#changes-by-kind-11)
     - [API Changes](#api-changes-2)
     - [Features & Enhancements](#features--enhancements-2)
     - [Deprecation](#deprecation-2)
-    - [Bug Fixes](#bug-fixes-6)
+    - [Bug Fixes](#bug-fixes-12)
     - [Security](#security-2)
   - [Other](#other-2)
     - [Dependencies](#dependencies-2)
@@ -78,11 +110,11 @@
   - [Downloads for v1.13.0-alpha.2](#downloads-for-v1130-alpha2)
   - [Changelog since v1.13.0-alpha.1](#changelog-since-v1130-alpha1)
   - [Urgent Update Notes](#urgent-update-notes-3)
-  - [Changes by Kind](#changes-by-kind-6)
+  - [Changes by Kind](#changes-by-kind-12)
     - [API Changes](#api-changes-3)
     - [Features & Enhancements](#features--enhancements-3)
     - [Deprecation](#deprecation-3)
-    - [Bug Fixes](#bug-fixes-7)
+    - [Bug Fixes](#bug-fixes-13)
     - [Security](#security-3)
   - [Other](#other-3)
     - [Dependencies](#dependencies-3)
@@ -92,11 +124,11 @@
   - [Downloads for v1.13.0-alpha.1](#downloads-for-v1130-alpha1)
   - [Changelog since v1.12.0](#changelog-since-v1120)
   - [Urgent Update Notes](#urgent-update-notes-4)
-  - [Changes by Kind](#changes-by-kind-7)
+  - [Changes by Kind](#changes-by-kind-13)
     - [API Changes](#api-changes-4)
     - [Features & Enhancements](#features--enhancements-4)
     - [Deprecation](#deprecation-4)
-    - [Bug Fixes](#bug-fixes-8)
+    - [Bug Fixes](#bug-fixes-14)
     - [Security](#security-4)
   - [Other](#other-4)
     - [Dependencies](#dependencies-4)
@@ -104,6 +136,83 @@
     - [Instrumentation](#instrumentation-4)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
+# v1.13.10
+## Downloads for v1.13.10
+
+Download v1.13.10 in the [v1.13.10 release page](https://github.com/karmada-io/karmada/releases/tag/v1.13.10).
+
+## Changelog since v1.13.9
+### Changes by Kind
+#### Bug Fixes
+- `karmadactl`: Fixed the issue that the `register` command still uses the cluster-info endpoint when registering a pull-mode cluster, even if the user provides the API server endpoint. ([#6901](https://github.com/karmada-io/karmada/pull/6901), @zhzhuang-zju)
+- `karmada-controller-manager`: Fixed the issue that attached resource changes were not synchronized to the cluster in the dependencies distributor. ([#6984](https://github.com/karmada-io/karmada/pull/6984), @XiShanYongYe-Chang)
+
+# v1.13.9
+## Downloads for v1.13.9
+
+Download v1.13.9 in the [v1.13.9 release page](https://github.com/karmada-io/karmada/releases/tag/v1.13.9).
+
+## Changelog since v1.13.8
+### Changes by Kind
+#### Bug Fixes
+- `karmada-metrics-adapter`: Fixed a panic when querying node metrics by name caused by using the wrong GroupVersionResource (PodsGVR instead of NodesGVR) when creating a lister. ([#6891](https://github.com/karmada-io/karmada/pull/6891), @vie-serendipity)
+
+#### Others
+- The base image `alpine` now has been promoted from 3.22.1 to 3.22.2. ([#6823](https://github.com/karmada-io/karmada/pull/6823), @dependabot)
+
+# v1.13.8
+## Downloads for v1.13.8
+
+Download v1.13.8 in the [v1.13.8 release page](https://github.com/karmada-io/karmada/releases/tag/v1.13.8).
+
+## Changelog since v1.13.7
+### Changes by Kind
+#### Bug Fixes
+- `ResourceInterpreter`: Fixed the issue that when an object API field name contains dots or colons, it would cause the resource interpreter to fail. ([#6769](https://github.com/karmada-io/karmada/pull/6769), @rohan-019)
+- `karmada-operator`: Fixed the issue that CRDs can not be updated during upgrades of the Karmada instance. ([#6800](https://github.com/karmada-io/karmada/pull/6800), @RainbowMango)
+
+# v1.13.7
+## Downloads for v1.13.7
+
+Download v1.13.7 in the [v1.13.7 release page](https://github.com/karmada-io/karmada/releases/tag/v1.13.7).
+
+## Changelog since v1.13.6
+### Changes by Kind
+#### Bug Fixes
+- `karmada-controller-manager/karmada-agent`: Fixed the issue that informer cache sync failures for specific resources incorrectly shut down all informers for that cluster, affecting resource distribution and work status synchronization. ([#6683](https://github.com/karmada-io/karmada/pull/6683), @Mou887)
+- `karmada-controller-manager`: Fixed the issue that reporting repeat EndpointSlice resources leads to duplicate backend IPs. ([#6693](https://github.com/karmada-io/karmada/pull/6693), @XiShanYongYe-Chang)
+- `karmada-controller-manager`: Fixed the issue where pp-related claimMetadata was not properly cleaned up when deleting PropagationPolicy with Lazy activationPreference. ([#6704](https://github.com/karmada-io/karmada/pull/6704), @zhzhuang-zju)
+- `karmada-controller-manager`: Fixed the issue that the binding's suspension persists when the policy deletes the suspension configuration. ([#6717](https://github.com/karmada-io/karmada/pull/6717), @zhzhuang-zju)
+- `karmada-controller-manager`: Fixed the issue that the relevant fields in rb and pp are inconsistent. ([#6714](https://github.com/karmada-io/karmada/pull/6714), @zhzhuang-zju)
+- `karmada-interpreter-webhook-example`: Fixed write response error for broken HTTP connection issue. ([#6680](https://github.com/karmada-io/karmada/pull/6680), @tdn21)
+- `karmadactl`: Fixed the issue of `promote` command that the interpreter cache is out of sync before first use. ([#6698](https://github.com/karmada-io/karmada/pull/6698), @Mou887)
+
+# v1.13.6
+## Downloads for v1.13.6
+
+Download v1.13.6 in the [v1.13.6 release page](https://github.com/karmada-io/karmada/releases/tag/v1.13.6).
+
+## Changelog since v1.13.5
+### Changes by Kind
+#### Bug Fixes
+- `karmada-controller-manager`: Fixed the issue that the informer cache gets unexpectedly modified during usage. ([#6646](https://github.com/karmada-io/karmada/pull/6646), @luyb177)
+- `karmada-controller-manager`: Fixed an issue where the ResourceInterpreter could report as synced before its underlying informer cache was fully synchronized, preventing potential out-of-sync errors during startup. ([#6644](https://github.com/karmada-io/karmada/pull/6644), @liaolecheng)
+- `karmada-controller-manager`: Fixed the issue that endpointslice and work resources residue when using MCS and MCI simultaneously and then deleting them. ([#6634](https://github.com/karmada-io/karmada/pull/6634), @XiShanYongYe-Chang)
+
+# v1.13.5
+## Downloads for v1.13.5
+
+Download v1.13.5 in the [v1.13.5 release page](https://github.com/karmada-io/karmada/releases/tag/v1.13.5).
+
+## Changelog since v1.13.4
+### Changes by Kind
+#### Bug Fixes
+- `karmada-controller-manager`: Fixed the issue that resources will be recreated after being deleted on the cluster when resource is suspended for dispatching. ([#6537](https://github.com/karmada-io/karmada/pull/6537), @luyb177)
+- `karmada-controller-manager`: Fixed the issue that EndpointSlice are deleted unexpectedly due to the EndpointSlice informer cache not being synced. ([#6584](https://github.com/karmada-io/karmada/pull/6584), @XiShanYongYe-Chang)
+
+#### Others
+- The base image `alpine` now has been promoted from 3.22.0 to 3.22.1. ([#6561](https://github.com/karmada-io/karmada/pull/6561), @dependabot)
 
 # v1.13.4
 ## Downloads for v1.13.4
@@ -116,7 +225,7 @@ Download v1.13.4 in the [v1.13.4 release page](https://github.com/karmada-io/kar
 None.
 
 #### Others
-- The base image `alpine` now has been promoted from 3.21.3 to 3.22.0. ([#6421](https://github.com/karmada-io/karmada/pull/6421))
+- The base image `alpine` now has been promoted from 3.21.3 to 3.22.0. ([#6421](https://github.com/karmada-io/karmada/pull/6421), @dependabot)
 
 # v1.13.3
 ## Downloads for v1.13.3
@@ -297,7 +406,7 @@ For a detailed description and usage guide, see the [Karmada Dashboard](https://
 ## Other
 ### Dependencies
 - Karmada now built with Golang v1.22.12. ([#6131](https://github.com/karmada-io/karmada/pull/6131), @sachinparihar)
-- The base image `alpine` now has been promoted from 3.21.2 to 3.21.3. ([#6124](https://github.com/karmada-io/karmada/pull/6124))
+- The base image `alpine` now has been promoted from 3.21.2 to 3.21.3. ([#6124](https://github.com/karmada-io/karmada/pull/6124), @dependabot)
 - update kubernetes version to v1.31.3 ([#5910](https://github.com/karmada-io/karmada/pull/5910), @dongjiang1989)
 
 ### Helm Charts
@@ -467,7 +576,7 @@ None.
 
 ## Other
 ### Dependencies
-- The base image `alpine` now has been promoted from 3.21.0 to 3.21.2. ([#6040](https://github.com/karmada-io/karmada/pull/6040))
+- The base image `alpine` now has been promoted from 3.21.0 to 3.21.2. ([#6040](https://github.com/karmada-io/karmada/pull/6040), @dependabot)
 
 ### Helm Charts
 None.
@@ -509,7 +618,7 @@ None.
 ## Other
 ### Dependencies
 - update kubernetes version to v1.31.3 ([#5910](https://github.com/karmada-io/karmada/pull/5910), @dongjiang1989)
-- The base image `alpine` now has been promoted from `3.20.3` to `3.21.0`. ([#5920](https://github.com/karmada-io/karmada/pull/5920))
+- The base image `alpine` now has been promoted from `3.20.3` to `3.21.0`. ([#5920](https://github.com/karmada-io/karmada/pull/5920), @dependabot)
 
 ### Helm Charts
 - upgrade helm chart index to v1.12.0. ([#5918](https://github.com/karmada-io/karmada/pull/5918), @chaosi-zju)

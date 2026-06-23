@@ -38,6 +38,7 @@ import (
 
 	networkingv1alpha1 "github.com/karmada-io/karmada/pkg/apis/networking/v1alpha1"
 	policyv1alpha1 "github.com/karmada-io/karmada/pkg/apis/policy/v1alpha1"
+	"github.com/karmada-io/karmada/pkg/events"
 	"github.com/karmada-io/karmada/pkg/util"
 	"github.com/karmada-io/karmada/pkg/util/names"
 	"github.com/karmada-io/karmada/test/e2e/framework"
@@ -343,6 +344,12 @@ var _ = ginkgo.Describe("Multi-Cluster Service testing", func() {
 				gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 			})
 
+			ginkgo.By(fmt.Sprintf("Check ServiceImport(%s/%s) SyncDerivedServiceSucceed event", serviceImport.Namespace, serviceImport.Name), func() {
+				framework.WaitEventFitWith(kubeClient, serviceImport.Namespace, serviceImport.Name, func(event corev1.Event) bool {
+					return event.Reason == events.EventReasonSyncDerivedServiceSucceed && event.Type == corev1.EventTypeNormal
+				})
+			})
+
 			ginkgo.By(fmt.Sprintf("Wait EndpointSlices have been imported to %s cluster", serviceImportClusterName), func() {
 				gomega.Eventually(func(g gomega.Gomega) (int, error) {
 					endpointSlices, err := importClusterClient.DiscoveryV1().EndpointSlices(demoService.Namespace).List(context.TODO(), metav1.ListOptions{
@@ -437,6 +444,12 @@ var _ = ginkgo.Describe("Multi-Cluster Service testing", func() {
 					}
 					return epNums, nil
 				}, pollTimeout, pollInterval).Should(gomega.Equal(1))
+			})
+
+			ginkgo.By(fmt.Sprintf("Check ServiceImport(%s/%s) SyncDerivedServiceSucceed event", serviceImport.Namespace, serviceImport.Name), func() {
+				framework.WaitEventFitWith(kubeClient, serviceImport.Namespace, serviceImport.Name, func(event corev1.Event) bool {
+					return event.Reason == events.EventReasonSyncDerivedServiceSucceed && event.Type == corev1.EventTypeNormal
+				})
 			})
 
 			klog.Infof("Update Deployment's replicas in %s cluster", serviceExportClusterName)
@@ -555,6 +568,18 @@ var _ = ginkgo.Describe("CrossCluster MultiClusterService testing", func() {
 				return meta.IsStatusConditionTrue(mcs.Status.Conditions, networkingv1alpha1.EndpointSliceDispatched)
 			})
 
+			ginkgo.By(fmt.Sprintf("Check MultiClusterService(%s/%s) SyncServiceSucceed event", testNamespace, mcsName), func() {
+				framework.WaitEventFitWith(kubeClient, testNamespace, mcsName, func(event corev1.Event) bool {
+					return event.Reason == events.EventReasonSyncServiceSucceed && event.Type == corev1.EventTypeNormal
+				})
+			})
+
+			ginkgo.By(fmt.Sprintf("Check MultiClusterService(%s/%s) DispatchEndpointSliceSucceed event", testNamespace, mcsName), func() {
+				framework.WaitEventFitWith(kubeClient, testNamespace, mcsName, func(event corev1.Event) bool {
+					return event.Reason == events.EventReasonDispatchEndpointSliceSucceed && event.Type == corev1.EventTypeNormal
+				})
+			})
+
 			gomega.Eventually(func() bool {
 				return checkEndpointSliceWithMultiClusterService(testNamespace, mcsName, mcs.Spec.ProviderClusters, mcs.Spec.ConsumerClusters)
 			}, pollTimeout, pollInterval).Should(gomega.BeTrue())
@@ -637,6 +662,18 @@ var _ = ginkgo.Describe("CrossCluster MultiClusterService testing", func() {
 
 			framework.WaitMultiClusterServicePresentOnClustersFitWith(karmadaClient, testNamespace, mcsName, func(mcs *networkingv1alpha1.MultiClusterService) bool {
 				return meta.IsStatusConditionTrue(mcs.Status.Conditions, networkingv1alpha1.EndpointSliceDispatched)
+			})
+
+			mcs.Spec.ProviderClusters = []networkingv1alpha1.ClusterSelector{
+				{Name: member2Name},
+				{Name: "member-not-found"},
+			}
+			framework.UpdateMultiClusterService(karmadaClient, mcs)
+
+			ginkgo.By(fmt.Sprintf("Check MultiClusterService(%s/%s) ClusterNotFound event", testNamespace, mcsName), func() {
+				framework.WaitEventFitWith(kubeClient, testNamespace, mcsName, func(event corev1.Event) bool {
+					return event.Reason == events.EventReasonClusterNotFound && event.Type == corev1.EventTypeWarning
+				})
 			})
 		})
 	})
@@ -739,6 +776,7 @@ var _ = ginkgo.Describe("CrossCluster MultiClusterService testing", func() {
 			}, pollTimeout, pollInterval).Should(gomega.BeTrue())
 		})
 	})
+
 })
 
 func checkEndpointSliceWithMultiClusterService(mcsNamespace, mcsName string, providerClusters, consumerClusters []networkingv1alpha1.ClusterSelector) bool {

@@ -24,10 +24,10 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/klog/v2"
-	"k8s.io/utils/ptr"
 
 	workloadv1alpha1 "github.com/karmada-io/karmada/examples/customresourceinterpreter/apis/workload/v1alpha1"
 	configv1alpha1 "github.com/karmada-io/karmada/pkg/apis/config/v1alpha1"
+	workv1alpha2 "github.com/karmada-io/karmada/pkg/apis/work/v1alpha2"
 	"github.com/karmada-io/karmada/pkg/webhook/interpreter"
 )
 
@@ -53,6 +53,8 @@ func (e *workloadInterpreter) Handle(_ context.Context, req interpreter.Request)
 	switch req.Operation {
 	case configv1alpha1.InterpreterOperationInterpretReplica:
 		return e.responseWithExploreReplica(workload)
+	case configv1alpha1.InterpreterOperationInterpretComponent:
+		return e.responseWithExploreComponent(workload)
 	case configv1alpha1.InterpreterOperationReviseReplica:
 		return e.responseWithExploreReviseReplica(workload, req)
 	case configv1alpha1.InterpreterOperationRetain:
@@ -77,7 +79,26 @@ func (e *workloadInterpreter) InjectDecoder(d *interpreter.Decoder) {
 
 func (e *workloadInterpreter) responseWithExploreReplica(workload *workloadv1alpha1.Workload) interpreter.Response {
 	res := interpreter.Succeeded("")
-	res.Replicas = workload.Spec.Replicas
+	replicas := new(int32(1))
+	if workload.Spec.Replicas != nil {
+		replicas = workload.Spec.Replicas
+	}
+	res.Replicas = replicas
+	return res
+}
+
+func (e *workloadInterpreter) responseWithExploreComponent(workload *workloadv1alpha1.Workload) interpreter.Response {
+	res := interpreter.Succeeded("")
+	replicas := int32(1)
+	if workload.Spec.Replicas != nil {
+		replicas = *workload.Spec.Replicas
+	}
+	res.Components = []workv1alpha2.Component{
+		{
+			Name:     "main",
+			Replicas: replicas,
+		},
+	}
 	return res
 }
 
@@ -142,9 +163,9 @@ func (e *workloadInterpreter) responseWithExploreAggregateStatus(workload *workl
 }
 
 func (e *workloadInterpreter) responseWithExploreInterpretHealth(workload *workloadv1alpha1.Workload) interpreter.Response {
-	healthy := ptr.To[bool](false)
+	healthy := new(false)
 	if workload.Status.ReadyReplicas == *workload.Spec.Replicas {
-		healthy = ptr.To[bool](true)
+		healthy = new(true)
 	}
 
 	res := interpreter.Succeeded("")

@@ -79,7 +79,7 @@ func TestNewCmdTokenDelete(t *testing.T) {
 
 func TestCommandTokenOptions_runCreateToken(t *testing.T) {
 	cmdOpt := NewTestCommandTokenOptions()
-	client := kubernetesfake.NewSimpleClientset()
+	client := kubernetesfake.NewClientset()
 	if err := cmdOpt.runCreateToken(&mockIOWriter{}, client); err != nil {
 		t.Errorf("runCreateToken() want nil, but get:%v", err)
 	}
@@ -111,7 +111,7 @@ func TestCommandTokenOptions_runListTokens(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cmdOpt := NewTestCommandTokenOptions()
-			client := kubernetesfake.NewSimpleClientset()
+			client := kubernetesfake.NewClientset()
 			ctx := context.Background()
 
 			for i, id := range tt.tokenID {
@@ -152,7 +152,7 @@ func TestCommandTokenOptions_runDeleteTokens(t *testing.T) {
 			tokenInCache: []string{},
 			wantErr:      true,
 		},
-		{
+		{ // #nosec G101 -- not a credential; this is a fake token ID used purely as a test fixture.
 			name:         "invalid format token id but match BootstrapTokenPattern",
 			tokenID:      "foo0id.foo0secret0foofo",
 			tokenInCache: []string{},
@@ -175,7 +175,7 @@ func TestCommandTokenOptions_runDeleteTokens(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cmdOpt := NewTestCommandTokenOptions()
-			client := kubernetesfake.NewSimpleClientset()
+			client := kubernetesfake.NewClientset()
 			ctx := context.Background()
 
 			for _, tokenName := range tt.tokenInCache {

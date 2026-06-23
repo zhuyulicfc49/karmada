@@ -18,6 +18,7 @@ package helper
 
 import (
 	"context"
+	"slices"
 
 	discoveryv1 "k8s.io/api/discovery/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -99,13 +100,7 @@ func DeleteEndpointSlice(ctx context.Context, c client.Client, selector labels.S
 
 // MultiClusterServiceCrossClusterEnabled will check if it's a CrossCluster MultiClusterService.
 func MultiClusterServiceCrossClusterEnabled(mcs *networkingv1alpha1.MultiClusterService) bool {
-	for _, svcType := range mcs.Spec.Types {
-		if svcType == networkingv1alpha1.ExposureTypeCrossCluster {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(mcs.Spec.Types, networkingv1alpha1.ExposureTypeCrossCluster)
 }
 
 // GetProviderClusters will extract the target provider clusters of the service
@@ -140,4 +135,13 @@ func GetConsumerClusters(client client.Client, mcs *networkingv1alpha1.MultiClus
 		return nil, err
 	}
 	return allClusters, nil
+}
+
+// IsEndpointSliceManagedByKarmada checks if the EndpointSlice is managed by Karmada.
+func IsEndpointSliceManagedByKarmada(epsLabels map[string]string) bool {
+	switch util.GetLabelValue(epsLabels, discoveryv1.LabelManagedBy) {
+	case util.EndpointSliceDispatchControllerLabelValue, util.EndpointSliceControllerLabelValue:
+		return true
+	}
+	return false
 }

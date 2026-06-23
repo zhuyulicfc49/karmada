@@ -94,7 +94,7 @@ spec:
             - --cluster-api-endpoint={member_cluster_api_endpoint}
             - --cluster-status-update-frequency=10s
             - --health-probe-bind-address=0.0.0.0:10357
-            - --v=4
+            - --v=2
           livenessProbe:
             httpGet:
               path: /healthz

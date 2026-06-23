@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -27,8 +28,17 @@ import (
 
 	clusterv1alpha1 "github.com/karmada-io/karmada/pkg/apis/cluster/v1alpha1"
 	workv1alpha2 "github.com/karmada-io/karmada/pkg/apis/work/v1alpha2"
+	"github.com/karmada-io/karmada/pkg/estimator"
+	"github.com/karmada-io/karmada/pkg/estimator/pb"
 	"github.com/karmada-io/karmada/pkg/features"
+	"github.com/karmada-io/karmada/pkg/util"
+	schedulerframework "github.com/karmada-io/karmada/pkg/util/lifted/scheduler/framework"
 )
+
+// maxPodsCountPerNode defines the maximum pods count per node.
+// This is the default and recommended value set by Kubernetes for nodes.
+// More details can be found at: https://kubernetes.io/docs/setup/best-practices/cluster-large/
+const maxPodsCountPerNode = 110
 
 // GeneralEstimator is the default replica estimator.
 func init() {
@@ -44,20 +54,24 @@ func NewGeneralEstimator() *GeneralEstimator {
 }
 
 // MaxAvailableReplicas estimates the maximum replicas that can be applied to the target cluster by cluster ResourceSummary.
-func (ge *GeneralEstimator) MaxAvailableReplicas(_ context.Context, clusters []*clusterv1alpha1.Cluster, replicaRequirements *workv1alpha2.ReplicaRequirements) ([]workv1alpha2.TargetCluster, error) {
-	availableTargetClusters := make([]workv1alpha2.TargetCluster, len(clusters))
-	for i, cluster := range clusters {
-		maxReplicas := ge.maxAvailableReplicas(cluster, replicaRequirements)
+func (ge *GeneralEstimator) MaxAvailableReplicas(_ context.Context, req ReplicaEstimationRequest) ([]workv1alpha2.TargetCluster, error) {
+	availableTargetClusters := make([]workv1alpha2.TargetCluster, len(req.Clusters))
+	for i, cluster := range req.Clusters {
+		maxReplicas := ge.maxAvailableReplicas(cluster, req.ReplicaRequirements, req.AssumedWorkloads[cluster.Name])
 		availableTargetClusters[i] = workv1alpha2.TargetCluster{Name: cluster.Name, Replicas: maxReplicas}
 	}
 	return availableTargetClusters, nil
 }
 
-func (ge *GeneralEstimator) maxAvailableReplicas(cluster *clusterv1alpha1.Cluster, replicaRequirements *workv1alpha2.ReplicaRequirements) int32 {
-	//Note: resourceSummary must be deep-copied before using in the function to avoid modifying the original data structure.
+func (ge *GeneralEstimator) maxAvailableReplicas(cluster *clusterv1alpha1.Cluster, replicaRequirements *workv1alpha2.ReplicaRequirements, assumedWorkloads []AssumedWorkload) int32 {
+	// Note: resourceSummary must be deep-copied before using in the function to avoid modifying the original data structure.
 	resourceSummary := cluster.Status.ResourceSummary.DeepCopy()
 	if resourceSummary == nil {
 		return 0
+	}
+	// Deduct assumed in-flight workloads before computing max replicas.
+	if features.FeatureGate.Enabled(features.SchedulingOvercommitProtection) && len(assumedWorkloads) > 0 {
+		deductAssumedWorkloadsFromSummary(resourceSummary, assumedWorkloads)
 	}
 
 	maximumReplicas := getAllowedPodNumber(resourceSummary)
@@ -73,7 +87,7 @@ func (ge *GeneralEstimator) maxAvailableReplicas(cluster *clusterv1alpha1.Cluste
 	// users have not set the models or the state has not been collected,
 	// we consider to use another way to calculate the max replicas.
 	if features.FeatureGate.Enabled(features.CustomizedClusterResourceModeling) && len(cluster.Status.ResourceSummary.AllocatableModelings) > 0 {
-		num, err := getMaximumReplicasBasedOnResourceModels(cluster, replicaRequirements)
+		num, err := getMaximumReplicasBasedOnResourceModels(cluster, replicaRequirements, assumedWorkloads)
 		if err == nil {
 			klog.Infof("cluster %s has max available replicas: %d according to cluster resource models", cluster.GetName(), num)
 			if num < maximumReplicas {
@@ -91,6 +105,341 @@ func (ge *GeneralEstimator) maxAvailableReplicas(cluster *clusterv1alpha1.Cluste
 	}
 
 	return int32(maximumReplicas) // #nosec G115: integer overflow conversion int64 -> int32
+}
+
+// deductAssumedWorkloadsFromSummary adds the resource demands of assumed in-flight workloads
+// to resourceSummary.Allocating so that existing estimation functions account for them.
+// It also deducts the pod count from the allowed pod budget.
+func deductAssumedWorkloadsFromSummary(resourceSummary *clusterv1alpha1.ResourceSummary, assumedWorkloads []AssumedWorkload) {
+	if resourceSummary.Allocating == nil {
+		resourceSummary.Allocating = make(corev1.ResourceList)
+	}
+	for _, aw := range assumedWorkloads {
+		for _, comp := range aw.Components {
+			replicas := int64(comp.Replicas)
+			if replicas <= 0 {
+				continue
+			}
+			// Deduct pod count.
+			existingPods := resourceSummary.Allocating.Pods()
+			resourceSummary.Allocating[corev1.ResourcePods] = *resource.NewQuantity(existingPods.Value()+replicas, resource.DecimalSI)
+
+			if comp.ReplicaRequirements == nil {
+				continue
+			}
+			// Deduct per-resource demands.
+			for resName, qty := range comp.ReplicaRequirements.ResourceRequest {
+				// Use MilliValue only for CPU (millicores are its natural unit).
+				// For all other resources (memory, extended resources, etc.) use Value() to
+				// avoid the ×1000 amplification that MilliValue introduces, which can overflow
+				// int64 for large quantities (e.g. 1Ti memory × 10000 replicas).
+				var total resource.Quantity
+				if resName == corev1.ResourceCPU {
+					total = *resource.NewMilliQuantity(qty.MilliValue()*replicas, qty.Format)
+				} else {
+					total = *resource.NewQuantity(qty.Value()*replicas, qty.Format)
+				}
+				if existing, ok := resourceSummary.Allocating[resName]; ok {
+					existing.Add(total)
+					resourceSummary.Allocating[resName] = existing
+				} else {
+					resourceSummary.Allocating[resName] = total
+				}
+			}
+		}
+	}
+}
+
+// MaxAvailableComponentSets (generic estimator) – resourceSummary only.
+func (ge *GeneralEstimator) MaxAvailableComponentSets(_ context.Context, req ComponentSetEstimationRequest) ([]ComponentSetEstimationResponse, error) {
+	responses := make([]ComponentSetEstimationResponse, len(req.Clusters))
+	for i, cluster := range req.Clusters {
+		maxComponentSets := ge.maxAvailableComponentSets(cluster, req.Components, req.AssumedWorkloads[cluster.Name])
+		responses[i] = ComponentSetEstimationResponse{Name: cluster.Name, Sets: maxComponentSets}
+	}
+	return responses, nil
+}
+
+func (ge *GeneralEstimator) maxAvailableComponentSets(cluster *clusterv1alpha1.Cluster, components []workv1alpha2.Component, assumedWorkloads []AssumedWorkload) int32 {
+	resourceSummary := cluster.Status.ResourceSummary.DeepCopy()
+	if resourceSummary == nil {
+		return 0
+	}
+
+	available := availableResourceMap(resourceSummary)
+	allowedPods := getAllowedPodNumber(resourceSummary)
+	if allowedPods <= 0 {
+		return 0
+	}
+
+	// Deduct assumed workloads from cluster-wide available resources.
+	// GeneralEstimator has no per-node view, so cluster-level aggregate deduction is used as a
+	// fallback: accumulate each assumed component's Replicas × ResourceRequest, subtract from the
+	// available resource map, and also reduce the allowed pod budget.
+	if features.FeatureGate.Enabled(features.SchedulingOvercommitProtection) && len(assumedWorkloads) > 0 {
+		allowedPods, available = deductAssumedWorkloads(allowedPods, available, assumedWorkloads)
+		if allowedPods <= 0 {
+			return 0
+		}
+	}
+
+	podsPerSet := podsInSet(components)
+	if podsPerSet <= 0 {
+		// No components or resources are defined, return max pod allowance as estimate
+		return int32(allowedPods) // #nosec G115: integer overflow conversion int64 -> int32
+	}
+
+	podBound := int32(allowedPods / podsPerSet) // #nosec G115: integer overflow conversion int64 -> int32
+
+	perSet := perSetRequirement(components)
+	maxSets, ok := resourceBoundedSets(podBound, perSet, available)
+	if !ok {
+		return 0
+	}
+
+	return applyResourceModelBound(cluster, components, assumedWorkloads, maxSets)
+}
+
+// deductAssumedWorkloads subtracts the resource demands of assumed workloads from the
+// pod budget and available resource map, returning the updated values.
+func deductAssumedWorkloads(allowedPods int64, available map[corev1.ResourceName]int64, assumedWorkloads []AssumedWorkload) (int64, map[corev1.ResourceName]int64) {
+	assumedPods, assumedResources := sumAssumedWorkloadDemands(assumedWorkloads)
+	allowedPods -= assumedPods
+	for resName, qty := range assumedResources {
+		available[resName] -= qty
+	}
+	return allowedPods, available
+}
+
+// resourceBoundedSets returns the maximum number of component sets that fit within the
+// available resource map, starting from podBound as the upper limit.
+// Returns (maxSets, true) on success, or (0, false) when any resource is exhausted.
+func resourceBoundedSets(podBound int32, perSet map[corev1.ResourceName]int64, available map[corev1.ResourceName]int64) (int32, bool) {
+	if len(perSet) == 0 || allZero(perSet) {
+		return podBound, true
+	}
+	maxSets := podBound
+	for resName, req := range perSet {
+		if req <= 0 {
+			continue
+		}
+		if available[resName] <= 0 {
+			return 0, false
+		}
+
+		resBound := int32(available[resName] / req) // #nosec G115: integer overflow conversion int64 -> int32
+		if resBound < maxSets {
+			maxSets = resBound
+		}
+	}
+	return maxSets, true
+}
+
+// applyResourceModelBound refines maxSets using cluster ResourceModels when the feature is
+// enabled and model data is available.  Returns the original maxSets if the feature is off
+// or the model-based calculation fails.
+func applyResourceModelBound(cluster *clusterv1alpha1.Cluster, components []workv1alpha2.Component, assumedWorkloads []AssumedWorkload, maxSets int32) int32 {
+	if !features.FeatureGate.Enabled(features.CustomizedClusterResourceModeling) || len(cluster.Status.ResourceSummary.AllocatableModelings) == 0 {
+		return maxSets
+	}
+	num, err := getMaximumSetsBasedOnResourceModels(cluster, components, assumedWorkloads, maxSets)
+	if err != nil {
+		klog.Warningf("Failed to get maximum sets based on resource models, skipping: %v", err)
+		return maxSets
+	}
+	if num < maxSets {
+		return num
+	}
+	return maxSets
+}
+
+// getMaximumSetsBasedOnResourceModels computes the maximum number of full sets that can be
+// placed on a cluster using the cluster's ResourceModels. It expands one set into
+// replica kinds (demand + count) and performs a first-fit-decreasing placement onto model-grade nodes.
+// `upperBound` caps the search. We can set this using the podBound (allowedPods / podsPerSet).
+// Assumed in-flight workloads are pre-simulated onto the model nodes so that their resource
+// consumption is reflected before placing the target component sets.
+func getMaximumSetsBasedOnResourceModels(cluster *clusterv1alpha1.Cluster, components []workv1alpha2.Component, assumedWorkloads []AssumedWorkload, upperBound int32) (int32, error) {
+	nodes, err := buildModelNodes(cluster)
+	if err != nil {
+		return -1, err
+	}
+
+	sim := estimator.NewSchedulingSimulator(nodes)
+
+	// Pre-simulate assumed in-flight workloads to consume their share of node capacity
+	// before estimating how many target component sets can still be placed.
+	// This mirrors the approach used in noderesource.EstimateComponents.
+	for _, aw := range assumedWorkloads {
+		if len(aw.Components) == 0 {
+			continue
+		}
+		pbAssumed, convErr := toPBComponents(aw.Components)
+		if convErr != nil {
+			return -1, convErr
+		}
+		if _, deductErr := sim.SimulateScheduling(pbAssumed, 1); deductErr != nil {
+			return -1, deductErr
+		}
+	}
+
+	pbComponents, err := toPBComponents(components)
+	if err != nil {
+		return -1, err
+	}
+
+	return sim.SimulateScheduling(pbComponents, upperBound)
+}
+
+// buildModelNodes constructs identical nodes for each model grade using its Min vector,
+// repeated AllocatableModelings[grade].Count times. Grades are indexed directly.
+func buildModelNodes(cluster *clusterv1alpha1.Cluster) ([]*schedulerframework.NodeInfo, error) {
+	if cluster == nil {
+		return nil, fmt.Errorf("nil cluster")
+	}
+	if cluster.Status.ResourceSummary == nil {
+		return nil, fmt.Errorf("resource summary is nil")
+	}
+	spec := cluster.Spec.ResourceModels
+	allocs := cluster.Status.ResourceSummary.AllocatableModelings
+	if len(spec) == 0 {
+		return nil, fmt.Errorf("no resource models defined")
+	}
+
+	// Build capacity template per grade
+	capsByGrade := make(map[uint]corev1.ResourceList, len(spec))
+	for _, m := range spec {
+		tmpl := make(corev1.ResourceList, len(m.Ranges))
+		for _, r := range m.Ranges {
+			tmpl[r.Name] = r.Min
+		}
+
+		// The number of pods a node can accommodate is a critical metric in scheduling simulation. Each node must have
+		// a pod capacity limit; otherwise, the scheduler cannot determine if a node can accommodate any pod. Kubernetes
+		// sets a default pod limit of 110 per node, which we adopt here for consistency.
+		//
+		// Note: This virtual node uses a fixed pod capacity of 110 for each simulation. The actual pod count already
+		// running on this virtual node is not considered in the calculation. This means the estimation may be inaccurate
+		// and could potentially exceed 110 pods in practice. This is an inherent limitation of the ResourceModel mechanism,
+		// as the estimation is approximate rather than precise.
+		tmpl[corev1.ResourcePods] = *resource.NewQuantity(maxPodsCountPerNode, resource.DecimalSI)
+		capsByGrade[m.Grade] = tmpl
+	}
+
+	// Accumulate counts by grade
+	countByGrade := make(map[uint]int, len(allocs))
+	for _, a := range allocs {
+		if a.Count < 0 {
+			return nil, fmt.Errorf("negative node count for grade %d", a.Grade)
+		}
+		countByGrade[a.Grade] += a.Count
+	}
+
+	// Collect grades and sort, so that order of nodes is
+	grades := make([]int, 0, len(capsByGrade))
+	for g := range capsByGrade {
+		grades = append(grades, int(g)) // #nosec G115: integer overflow conversion uint -> int
+	}
+	sort.Ints(grades)
+
+	// Emit nodes for grades present in both spec & status.
+	var nodes []*schedulerframework.NodeInfo
+	for _, grade := range grades {
+		tmpl, cnt := capsByGrade[uint(grade)], countByGrade[uint(grade)] // #nosec G115: integer overflow conversion int -> uint
+		if tmpl == nil || cnt == 0 {
+			continue
+		}
+
+		for range cnt {
+			node := &schedulerframework.NodeInfo{
+				Allocatable: util.NewResource(tmpl),
+			}
+			nodes = append(nodes, node)
+		}
+	}
+	return nodes, nil
+}
+
+// podsInSet computes the total number of pods in the CRD
+func podsInSet(components []workv1alpha2.Component) int64 {
+	var sum int64
+	for _, c := range components {
+		sum += int64(c.Replicas)
+	}
+	return sum
+}
+
+// sumAssumedWorkloadDemands computes the total pod count and aggregate per-resource demand
+// across all assumed workloads. GeneralEstimator uses this to deduct reserved capacity from
+// the cluster-wide available budget before estimating the remaining component-set count.
+func sumAssumedWorkloadDemands(assumedWorkloads []AssumedWorkload) (pods int64, resources map[corev1.ResourceName]int64) {
+	resources = make(map[corev1.ResourceName]int64)
+	for _, aw := range assumedWorkloads {
+		for _, c := range aw.Components {
+			replicas := int64(c.Replicas)
+			pods += replicas
+			if c.ReplicaRequirements == nil {
+				continue
+			}
+			for resName, qty := range c.ReplicaRequirements.ResourceRequest {
+				resources[resName] += quantityAsInt64(qty) * replicas
+			}
+		}
+	}
+	return pods, resources
+}
+
+// perSetRequirement computes the aggregate resource(such as CPU, Memory, GPU, etc) demand of one set of components.
+func perSetRequirement(components []workv1alpha2.Component) map[corev1.ResourceName]int64 {
+	resourceRequirements := map[corev1.ResourceName]int64{}
+	for _, c := range components {
+		if c.ReplicaRequirements == nil || c.ReplicaRequirements.ResourceRequest == nil {
+			continue
+		}
+		replicas := int64(c.Replicas)
+		for resName, qty := range c.ReplicaRequirements.ResourceRequest {
+			baseAmount := quantityAsInt64(qty)
+			resourceRequirements[resName] += baseAmount * replicas
+		}
+	}
+	return resourceRequirements
+}
+
+// availableResourceMap parses the cluster resourceSummary and returns map of resourceName -> availableQuantity (int64)
+func availableResourceMap(resourceSummary *clusterv1alpha1.ResourceSummary) map[corev1.ResourceName]int64 {
+	available := make(map[corev1.ResourceName]int64, len(resourceSummary.Allocatable))
+	for key, allocatable := range resourceSummary.Allocatable {
+		a := allocatable.DeepCopy()
+		if allocated, ok := resourceSummary.Allocated[key]; ok {
+			a.Sub(allocated)
+		}
+		if allocating, ok := resourceSummary.Allocating[key]; ok {
+			a.Sub(allocating)
+		}
+		available[key] = quantityAsInt64(a)
+	}
+	return available
+}
+
+// Converts quantity into an int representation depending on format
+func quantityAsInt64(q resource.Quantity) int64 {
+	switch q.Format {
+	case resource.DecimalSI, resource.DecimalExponent:
+		return q.MilliValue()
+	case resource.BinarySI:
+		return q.Value()
+	default:
+		return q.Value()
+	}
+}
+
+func allZero(m map[corev1.ResourceName]int64) bool {
+	for _, v := range m {
+		if v != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func getAllowedPodNumber(resourceSummary *clusterv1alpha1.ResourceSummary) int64 {
@@ -111,46 +460,6 @@ func getAllowedPodNumber(resourceSummary *clusterv1alpha1.ResourceSummary) int64
 		return 0
 	}
 	return allowedPodNumber
-}
-
-func convertToResourceModelsMinMap(models []clusterv1alpha1.ResourceModel) map[corev1.ResourceName][]resource.Quantity {
-	resourceModelsMinMap := make(map[corev1.ResourceName][]resource.Quantity)
-	for _, model := range models {
-		for _, resourceModelRange := range model.Ranges {
-			resourceModelsMinMap[resourceModelRange.Name] = append(resourceModelsMinMap[resourceModelRange.Name], resourceModelRange.Min)
-		}
-	}
-
-	return resourceModelsMinMap
-}
-
-func getNodeAvailableReplicas(modelIndex int, replicaRequirements *workv1alpha2.ReplicaRequirements, resourceModelsMinMap map[corev1.ResourceName][]resource.Quantity) int64 {
-	var maximumReplicasOneNode int64 = math.MaxInt64
-	for key, value := range replicaRequirements.ResourceRequest {
-		requestedQuantity := value.Value()
-		if requestedQuantity <= 0 {
-			continue
-		}
-
-		availableMinBoundary := resourceModelsMinMap[key][modelIndex]
-
-		availableQuantity := availableMinBoundary.Value()
-		if key == corev1.ResourceCPU {
-			requestedQuantity = value.MilliValue()
-			availableQuantity = availableMinBoundary.MilliValue()
-		}
-
-		maximumReplicasForResource := availableQuantity / requestedQuantity
-		if maximumReplicasForResource < maximumReplicasOneNode {
-			maximumReplicasOneNode = maximumReplicasForResource
-		}
-	}
-
-	// if it is the first suitable model, we consider this case to be able to deploy a Pod.
-	if maximumReplicasOneNode == 0 {
-		return 1
-	}
-	return maximumReplicasOneNode
 }
 
 func getMaximumReplicasBasedOnClusterSummary(resourceSummary *clusterv1alpha1.ResourceSummary, replicaRequirements *workv1alpha2.ReplicaRequirements) int64 {
@@ -195,55 +504,50 @@ func getMaximumReplicasBasedOnClusterSummary(resourceSummary *clusterv1alpha1.Re
 	return maximumReplicas
 }
 
-func getMaximumReplicasBasedOnResourceModels(cluster *clusterv1alpha1.Cluster, replicaRequirements *workv1alpha2.ReplicaRequirements) (int64, error) {
-	resourceModelsMinMap := convertToResourceModelsMinMap(cluster.Spec.ResourceModels)
+func getMaximumReplicasBasedOnResourceModels(cluster *clusterv1alpha1.Cluster, replicaRequirements *workv1alpha2.ReplicaRequirements, assumedWorkloads []AssumedWorkload) (int64, error) {
+	nodes, err := buildModelNodes(cluster)
+	if err != nil {
+		return -1, err
+	}
 
-	minCompliantModelIndex := 0
-	for key, value := range replicaRequirements.ResourceRequest {
-		requestedQuantity := value.Value()
-		if requestedQuantity <= 0 {
+	// Model single-template scheduling as a one-pod component so that the same
+	// SchedulingSimulator used for multi-template can handle node affinity,
+	// tolerations, and fragmentation correctly.
+	pbReq, err := toPBReplicaRequirements(&workv1alpha2.ComponentReplicaRequirements{
+		ResourceRequest: replicaRequirements.ResourceRequest,
+		NodeClaim:       replicaRequirements.NodeClaim,
+	})
+	if err != nil {
+		return -1, err
+	}
+	pbComp := []*pb.Component{{
+		Name:                "replica",
+		Replicas:            1,
+		ReplicaRequirements: pbReq,
+	}}
+
+	sim := estimator.NewSchedulingSimulator(nodes)
+
+	// Pre-simulate assumed in-flight workloads to consume their share of node
+	// capacity before estimating how many target replicas can still be placed.
+	// This mirrors the approach used in noderesource.EstimateComponents and
+	// getMaximumSetsBasedOnResourceModels.
+	for _, aw := range assumedWorkloads {
+		if len(aw.Components) == 0 {
 			continue
 		}
-
-		quantityArray, ok := resourceModelsMinMap[key]
-		if !ok {
-			return -1, fmt.Errorf("resource model is inapplicable as missing resource: %s", string(key))
+		pbAssumed, convErr := toPBComponents(aw.Components)
+		if convErr != nil {
+			return -1, convErr
 		}
-
-		// Find the minimum model grade for each type of resource quest, if no
-		// suitable model is found indicates that there is no appropriate model
-		// grade and return immediately.
-		minCompliantModelIndexForResource := minimumModelIndex(quantityArray, value)
-		if minCompliantModelIndexForResource == -1 {
-			return 0, nil
-		}
-		if minCompliantModelIndex <= minCompliantModelIndexForResource {
-			minCompliantModelIndex = minCompliantModelIndexForResource
+		if _, deductErr := sim.SimulateScheduling(pbAssumed, 1); deductErr != nil {
+			return -1, deductErr
 		}
 	}
 
-	var maximumReplicasForResource int64
-	for i := minCompliantModelIndex; i < len(cluster.Spec.ResourceModels); i++ {
-		if cluster.Status.ResourceSummary.AllocatableModelings[i].Count == 0 {
-			continue
-		}
-		maximumReplicasForResource += int64(cluster.Status.ResourceSummary.AllocatableModelings[i].Count) * getNodeAvailableReplicas(i, replicaRequirements, resourceModelsMinMap)
+	count, err := sim.SimulateScheduling(pbComp, math.MaxInt32)
+	if err != nil {
+		return -1, err
 	}
-
-	return maximumReplicasForResource, nil
-}
-
-func minimumModelIndex(minimumGrades []resource.Quantity, requestValue resource.Quantity) int {
-	for index, minValue := range minimumGrades {
-		// Suppose there is the following resource model:
-		// Grade1: cpu [1C,2C)
-		// Grade2: cpu [2C,3C)
-		// If a Pod requests 1.5C of CPU, grade1 may not be able to provide sufficient resources,
-		// so we will choose grade2.
-		if minValue.Cmp(requestValue) >= 0 {
-			return index
-		}
-	}
-
-	return -1
+	return int64(count), nil
 }

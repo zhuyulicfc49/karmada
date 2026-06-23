@@ -22,6 +22,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/clock"
 
 	"github.com/karmada-io/karmada/pkg/scheduler/internal/heap"
 	metrics "github.com/karmada-io/karmada/pkg/scheduler/metrics/queue"
@@ -132,13 +133,15 @@ func NewSchedulingQueue(opts ...Option) SchedulingQueue {
 
 	bq := &prioritySchedulingQueue{
 		stop:                          make(chan struct{}),
+		clock:                         clock.RealClock{},
 		bindingInitialBackoffDuration: options.bindingInitialBackoffDuration,
 		bindingMaxBackoffDuration:     options.bindingMaxBackoffDuration,
 		bindingMaxInUnschedulableBindingsDuration: options.bindingMaxInUnschedulableBindingsDuration,
 		activeQ:               NewActiveQueue(metrics.NewActiveBindingsRecorder()),
-		backoffQ:              heap.NewWithRecorder(BindingKeyFunc, Less, metrics.NewBackoffBindingsRecorder()),
 		unschedulableBindings: newUnschedulableBindings(metrics.NewUnschedulableBindingsRecorder()),
 	}
+
+	bq.backoffQ = heap.NewWithRecorder(BindingKeyFunc, bq.lessBackoffCompletedWithPriority, metrics.NewBackoffBindingsRecorder())
 
 	return bq
 }
@@ -158,6 +161,9 @@ type prioritySchedulingQueue struct {
 	// lock takes precedence and should be taken first,
 	// before any other locks in the queue.
 	lock sync.RWMutex
+
+	// clock is the clock used to get the current time.
+	clock clock.WithTicker
 
 	// binding initial backoff duration.
 	bindingInitialBackoffDuration time.Duration
@@ -206,7 +212,7 @@ func (bq *prioritySchedulingQueue) flushBackoffQCompleted() {
 		}
 		_, err := bq.backoffQ.Pop()
 		if err != nil {
-			klog.Error(err, "Unable to pop binding from backoff queue despite backoff completion", "binding", bInfo.NamespacedKey)
+			klog.ErrorS(err, "Unable to pop binding from backoff queue despite backoff completion", "binding", bInfo.NamespacedKey)
 			break
 		}
 		bq.moveToActiveQ(bInfo)
@@ -217,7 +223,7 @@ func (bq *prioritySchedulingQueue) flushBackoffQCompleted() {
 // If this returns true, the binding should not be re-tried.
 func (bq *prioritySchedulingQueue) isBindingBackingoff(bindingInfo *QueuedBindingInfo) bool {
 	boTime := bq.getBackoffTime(bindingInfo)
-	return boTime.After(time.Now())
+	return boTime.After(bq.clock.Now())
 }
 
 // calculateBackoffDuration is a helper function for calculating the backoffDuration
@@ -247,6 +253,18 @@ func (bq *prioritySchedulingQueue) getBackoffTime(bindingInfo *QueuedBindingInfo
 	return backoffTime
 }
 
+// lessBackoffCompletedWithPriority is the function used by the backoffQ heap algorithm to sort bindings.
+// It sorts bindings based on their backoff completion time and priority.
+func (bq *prioritySchedulingQueue) lessBackoffCompletedWithPriority(bInfo1, bInfo2 *QueuedBindingInfo) bool {
+	bo1 := bq.getBackoffTime(bInfo1)
+	bo2 := bq.getBackoffTime(bInfo2)
+	if !bo1.Equal(bo2) {
+		return bo1.Before(bo2)
+	}
+	// If the backoff time is the same, sort the bindings as activeQ does.
+	return Less(bInfo1, bInfo2)
+}
+
 // flushUnschedulableBindingsLeftover moves bindings which stay in unschedulableBindings
 // longer than bindingMaxInUnschedulableBindingsDuration to activeQ.
 func (bq *prioritySchedulingQueue) flushUnschedulableBindingsLeftover() {
@@ -254,7 +272,7 @@ func (bq *prioritySchedulingQueue) flushUnschedulableBindingsLeftover() {
 	defer bq.lock.Unlock()
 
 	var bindingsToMove []*QueuedBindingInfo
-	currentTime := time.Now()
+	currentTime := bq.clock.Now()
 	for _, bInfo := range bq.unschedulableBindings.bindingInfoMap {
 		lastScheduleTime := bInfo.Timestamp
 		if currentTime.Sub(lastScheduleTime) > bq.bindingMaxInUnschedulableBindingsDuration {
@@ -289,7 +307,7 @@ func (bq *prioritySchedulingQueue) PushUnschedulableIfNotPresent(bindingInfo *Qu
 	}
 
 	bq.unschedulableBindings.addOrUpdate(bindingInfo)
-	klog.V(4).Info("Binding moved to an internal scheduling queue", "binding", bindingInfo.NamespacedKey, "queue", unschedulableBindings)
+	klog.V(4).InfoS("Binding moved to an internal scheduling queue", "binding", bindingInfo.NamespacedKey, "queue", unschedulableBindings)
 }
 
 func (bq *prioritySchedulingQueue) PushBackoffIfNotPresent(bindingInfo *QueuedBindingInfo) {
@@ -301,7 +319,7 @@ func (bq *prioritySchedulingQueue) PushBackoffIfNotPresent(bindingInfo *QueuedBi
 	}
 
 	bq.backoffQ.AddOrUpdate(bindingInfo)
-	klog.V(4).Info("Binding moved to an internal scheduling queue", "binding", bindingInfo.NamespacedKey, "queue", backoffQ)
+	klog.V(4).InfoS("Binding moved to an internal scheduling queue", "binding", bindingInfo.NamespacedKey, "queue", backoffQ)
 }
 
 // Done must be called for binding returned by Pop. This allows the queue to
@@ -326,7 +344,7 @@ func (bq *prioritySchedulingQueue) moveToActiveQ(bindingInfo *QueuedBindingInfo)
 	bq.activeQ.Push(bindingInfo)
 	_ = bq.backoffQ.Delete(bindingInfo) // just ignore this not-found error
 	bq.unschedulableBindings.delete(bindingInfo.NamespacedKey)
-	klog.V(4).Info("Binding moved to an internal scheduling queue", "binding", bindingInfo.NamespacedKey, "queue", activeQ)
+	klog.V(4).InfoS("Binding moved to an internal scheduling queue", "binding", bindingInfo.NamespacedKey, "queue", activeQ)
 }
 
 // UnschedulableBindings holds bindings that cannot be scheduled. This data structure

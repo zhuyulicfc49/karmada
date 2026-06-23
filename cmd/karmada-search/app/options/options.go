@@ -47,6 +47,10 @@ type Options struct {
 	KubeAPIQPS float32
 	// KubeAPIBurst is the burst to allow while talking with karmada-search.
 	KubeAPIBurst int
+	// ClusterAPIQPS is the QPS to use while talking with cluster kube-apiserver.
+	ClusterAPIQPS float32
+	// ClusterAPIBurst is the burst to allow while talking with cluster kube-apiserver.
+	ClusterAPIBurst int
 
 	ProfileOpts profileflag.Options
 
@@ -86,6 +90,8 @@ func (o *Options) AddFlags(flags *pflag.FlagSet) {
 
 	flags.Float32Var(&o.KubeAPIQPS, "kube-api-qps", 40.0, "QPS to use while talking with karmada-apiserver.")
 	flags.IntVar(&o.KubeAPIBurst, "kube-api-burst", 60, "Burst to use while talking with karmada-apiserver.")
+	flags.Float32Var(&o.ClusterAPIQPS, "cluster-api-qps", 40.0, "QPS to use while talking with cluster kube-apiserver.")
+	flags.IntVar(&o.ClusterAPIBurst, "cluster-api-burst", 60, "Burst to use while talking with cluster kube-apiserver.")
 	flags.BoolVar(&o.DisableSearch, "disable-search", false, "Disable search feature that would save memory usage significantly.")
 	flags.BoolVar(&o.DisableProxy, "disable-proxy", false, "Disable proxy feature that would save memory usage significantly.")
 

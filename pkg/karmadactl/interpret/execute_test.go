@@ -47,22 +47,22 @@ func TestOptions_runExecute(t *testing.T) {
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-    annotations:
-        cluster: cluster1
-    name: nginx
+  annotations:
+    cluster: cluster1
+  name: nginx
 spec:
-    replicas: 3
-    selector:
-        matchLabels:
-            app: nginx
-    template:
-        metadata:
-            labels:
-                app: nginx
-        spec:
-            containers:
-                - image: nginx:alpine
-                  name: nginx
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - image: nginx:alpine
+        name: nginx
 status: {}
 `,
 		},
@@ -80,7 +80,24 @@ status: {}
 ---
 # [2/2] requires:
 resourceRequest:
-    cpu: 100m
+  cpu: 100m
+`,
+		},
+		{
+			name: "execute interpretComponent",
+			options: &Options{
+				FilenameOptions: resource.FilenameOptions{Filenames: []string{"./testdata/customization.yml"}},
+				Operation:       "interpretComponent",
+				ObservedFile:    "./testdata/observed.yml",
+				Rules:           interpreter.AllResourceInterpreterCustomizationRules,
+			},
+			want: `---
+# [1/1] components:
+- name: master
+  replicaRequirements:
+    resourceRequest:
+      cpu: 100m
+  replicas: 3
 `,
 		},
 		{
@@ -97,27 +114,27 @@ resourceRequest:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-    annotations:
-        cluster: cluster1
-    name: nginx
+  annotations:
+    cluster: cluster1
+  name: nginx
 spec:
-    replicas: 2
-    selector:
-        matchLabels:
-            app: nginx
-    template:
-        metadata:
-            labels:
-                app: nginx
-        spec:
-            containers:
-                - image: nginx:alpine
-                  name: nginx
-                  resources:
-                    limits:
-                        cpu: 100m
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - image: nginx:alpine
+        name: nginx
+        resources:
+          limits:
+            cpu: 100m
 status:
-    readyReplicas: 3
+  readyReplicas: 3
 `,
 		},
 		{
@@ -175,27 +192,27 @@ true
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-    annotations:
-        cluster: cluster1
-    name: nginx
+  annotations:
+    cluster: cluster1
+  name: nginx
 spec:
-    replicas: 3
-    selector:
-        matchLabels:
-            app: nginx
-    template:
-        metadata:
-            labels:
-                app: nginx
-        spec:
-            containers:
-                - image: nginx:alpine
-                  name: nginx
-                  resources:
-                    limits:
-                        cpu: 100m
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - image: nginx:alpine
+        name: nginx
+        resources:
+          limits:
+            cpu: 100m
 status:
-    readyReplicas: 5
+  readyReplicas: 5
 `,
 		},
 	}

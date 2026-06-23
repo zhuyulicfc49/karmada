@@ -20,6 +20,7 @@ import (
 	"context"
 	"reflect"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc/metadata"
 	appsv1 "k8s.io/api/apps/v1"
@@ -27,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/wait"
 	discoveryfake "k8s.io/client-go/discovery/fake"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes/fake"
@@ -70,10 +72,8 @@ func TestAccurateSchedulerEstimatorServer_MaxAvailableReplicas(t *testing.T) {
 			// request 1 cpu, 2 mem
 			args: args{
 				request: &pb.MaxAvailableReplicasRequest{
-					Cluster: "fake",
-					ReplicaRequirements: pb.ReplicaRequirements{
-						ResourceRequest: testhelper.NewResourceList(1*testhelper.ResourceUnitCPU, 2*testhelper.ResourceUnitMem, testhelper.ResourceUnitZero),
-					},
+					Cluster:             "fake",
+					ReplicaRequirements: (&pb.ReplicaRequirements{}).MustSetResourceRequest(testhelper.NewResourceList(1*testhelper.ResourceUnitCPU, 2*testhelper.ResourceUnitMem, testhelper.ResourceUnitZero)),
 				},
 			},
 			wantResponse: &pb.MaxAvailableReplicasResponse{
@@ -99,10 +99,8 @@ func TestAccurateSchedulerEstimatorServer_MaxAvailableReplicas(t *testing.T) {
 			// request 1 cpu, 2 mem
 			args: args{
 				request: &pb.MaxAvailableReplicasRequest{
-					Cluster: "fake",
-					ReplicaRequirements: pb.ReplicaRequirements{
-						ResourceRequest: testhelper.NewResourceList(1*testhelper.ResourceUnitCPU, 2*testhelper.ResourceUnitMem, testhelper.ResourceUnitZero),
-					},
+					Cluster:             "fake",
+					ReplicaRequirements: (&pb.ReplicaRequirements{}).MustSetResourceRequest(testhelper.NewResourceList(1*testhelper.ResourceUnitCPU, 2*testhelper.ResourceUnitMem, testhelper.ResourceUnitZero)),
 				},
 			},
 			wantResponse: &pb.MaxAvailableReplicasResponse{
@@ -129,14 +127,13 @@ func TestAccurateSchedulerEstimatorServer_MaxAvailableReplicas(t *testing.T) {
 			args: args{
 				request: &pb.MaxAvailableReplicasRequest{
 					Cluster: "fake",
-					ReplicaRequirements: pb.ReplicaRequirements{
+					ReplicaRequirements: (&pb.ReplicaRequirements{
 						NodeClaim: &pb.NodeClaim{
 							NodeSelector: map[string]string{
 								"a": "3",
 							},
 						},
-						ResourceRequest: testhelper.NewResourceList(1*testhelper.ResourceUnitCPU, 2*testhelper.ResourceUnitMem, testhelper.ResourceUnitZero),
-					},
+					}).MustSetResourceRequest(testhelper.NewResourceList(1*testhelper.ResourceUnitCPU, 2*testhelper.ResourceUnitMem, testhelper.ResourceUnitZero)),
 				},
 			},
 			wantResponse: &pb.MaxAvailableReplicasResponse{
@@ -163,24 +160,21 @@ func TestAccurateSchedulerEstimatorServer_MaxAvailableReplicas(t *testing.T) {
 			args: args{
 				request: &pb.MaxAvailableReplicasRequest{
 					Cluster: "fake",
-					ReplicaRequirements: pb.ReplicaRequirements{
-						NodeClaim: &pb.NodeClaim{
-							NodeAffinity: &corev1.NodeSelector{
-								NodeSelectorTerms: []corev1.NodeSelectorTerm{
-									{
-										MatchExpressions: []corev1.NodeSelectorRequirement{
-											{
-												Key:      "a",
-												Operator: corev1.NodeSelectorOpGt,
-												Values:   []string{"0"},
-											},
+					ReplicaRequirements: (&pb.ReplicaRequirements{
+						NodeClaim: (&pb.NodeClaim{}).MustSetNodeAffinity(&corev1.NodeSelector{
+							NodeSelectorTerms: []corev1.NodeSelectorTerm{
+								{
+									MatchExpressions: []corev1.NodeSelectorRequirement{
+										{
+											Key:      "a",
+											Operator: corev1.NodeSelectorOpGt,
+											Values:   []string{"0"},
 										},
 									},
 								},
 							},
-						},
-						ResourceRequest: testhelper.NewResourceList(1*testhelper.ResourceUnitCPU, 2*testhelper.ResourceUnitMem, testhelper.ResourceUnitZero),
-					},
+						}),
+					}).MustSetResourceRequest(testhelper.NewResourceList(1*testhelper.ResourceUnitCPU, 2*testhelper.ResourceUnitMem, testhelper.ResourceUnitZero)),
 				},
 			},
 			wantResponse: &pb.MaxAvailableReplicasResponse{
@@ -207,14 +201,11 @@ func TestAccurateSchedulerEstimatorServer_MaxAvailableReplicas(t *testing.T) {
 			args: args{
 				request: &pb.MaxAvailableReplicasRequest{
 					Cluster: "fake",
-					ReplicaRequirements: pb.ReplicaRequirements{
-						NodeClaim: &pb.NodeClaim{
-							Tolerations: []corev1.Toleration{
-								{Key: "key1", Operator: corev1.TolerationOpEqual, Value: "value1"},
-							},
-						},
-						ResourceRequest: testhelper.NewResourceList(1*testhelper.ResourceUnitCPU, 2*testhelper.ResourceUnitMem, testhelper.ResourceUnitZero),
-					},
+					ReplicaRequirements: (&pb.ReplicaRequirements{
+						NodeClaim: (&pb.NodeClaim{}).MustSetTolerations([]corev1.Toleration{
+							{Key: "key1", Operator: corev1.TolerationOpEqual, Value: "value1"},
+						}),
+					}).MustSetResourceRequest(testhelper.NewResourceList(1*testhelper.ResourceUnitCPU, 2*testhelper.ResourceUnitMem, testhelper.ResourceUnitZero)),
 				},
 			},
 			wantResponse: &pb.MaxAvailableReplicasResponse{
@@ -225,8 +216,7 @@ func TestAccurateSchedulerEstimatorServer_MaxAvailableReplicas(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
+			ctx := t.Context()
 
 			gvrToListKind := map[schema.GroupVersionResource]string{
 				{Group: "apps", Version: "v1", Resource: "deployments"}: "DeploymentList",
@@ -244,11 +234,17 @@ func TestAccurateSchedulerEstimatorServer_MaxAvailableReplicas(t *testing.T) {
 				},
 			}
 
-			es, _ := NewEstimatorServer(ctx, fake.NewSimpleClientset(tt.objs...), dynamicClient, discoveryClient, opt)
+			es, _ := NewEstimatorServer(ctx, fake.NewClientset(tt.objs...), dynamicClient, discoveryClient, opt)
 
 			es.informerFactory.Start(ctx.Done())
 			es.informerFactory.WaitForCacheSync(ctx.Done())
 			es.informerManager.WaitForCacheSync()
+
+			// WaitForCacheSync only guarantees the informer store is synced, not that
+			// the registered event handlers have finished populating es.Cache (which is
+			// what EstimateReplicas reads). Wait until the expected nodes and assigned
+			// pods are present in es.Cache to avoid a flaky read of a partially-filled cache.
+			waitForEstimatorCacheSync(t, es, tt.objs)
 
 			gotResponse, err := es.MaxAvailableReplicas(ctx, tt.args.request)
 			if (err != nil) != tt.wantErr {
@@ -259,6 +255,37 @@ func TestAccurateSchedulerEstimatorServer_MaxAvailableReplicas(t *testing.T) {
 				t.Errorf("MaxAvailableReplicas() gotResponse = %v, want %v", gotResponse, tt.wantResponse)
 			}
 		})
+	}
+}
+
+// waitForEstimatorCacheSync waits until es.Cache has been populated with the
+// expected number of nodes and assigned pods. The estimator cache is filled
+// asynchronously by informer event handlers, so informerFactory.WaitForCacheSync
+// alone is not enough to guarantee EstimateReplicas reads a fully-synced cache.
+func waitForEstimatorCacheSync(t *testing.T, es *AccurateSchedulerEstimatorServer, objs []runtime.Object) {
+	t.Helper()
+
+	wantNodes, wantPods := 0, 0
+	for _, obj := range objs {
+		switch o := obj.(type) {
+		case *corev1.Node:
+			wantNodes++
+		case *corev1.Pod:
+			if o.Spec.NodeName != "" {
+				wantPods++
+			}
+		}
+	}
+
+	if err := wait.PollUntilContextTimeout(t.Context(), 10*time.Millisecond, 10*time.Second, true,
+		func(context.Context) (bool, error) {
+			podCount, err := es.Cache.PodCount()
+			if err != nil {
+				return false, nil
+			}
+			return es.Cache.NodeCount() >= wantNodes && podCount >= wantPods, nil
+		}); err != nil {
+		t.Fatalf("timed out waiting for estimator cache to sync: %v", err)
 	}
 }
 
@@ -286,10 +313,8 @@ func BenchmarkAccurateSchedulerEstimatorServer_MaxAvailableReplicas(b *testing.B
 			// request 1 cpu, 2 mem
 			args: args{
 				request: &pb.MaxAvailableReplicasRequest{
-					Cluster: "fake",
-					ReplicaRequirements: pb.ReplicaRequirements{
-						ResourceRequest: testhelper.NewResourceList(1*testhelper.ResourceUnitCPU, 2*testhelper.ResourceUnitMem, testhelper.ResourceUnitZero),
-					},
+					Cluster:             "fake",
+					ReplicaRequirements: (&pb.ReplicaRequirements{}).MustSetResourceRequest(testhelper.NewResourceList(1*testhelper.ResourceUnitCPU, 2*testhelper.ResourceUnitMem, testhelper.ResourceUnitZero)),
 				},
 			},
 		},
@@ -302,10 +327,8 @@ func BenchmarkAccurateSchedulerEstimatorServer_MaxAvailableReplicas(b *testing.B
 			// request 1 cpu, 2 mem
 			args: args{
 				request: &pb.MaxAvailableReplicasRequest{
-					Cluster: "fake",
-					ReplicaRequirements: pb.ReplicaRequirements{
-						ResourceRequest: testhelper.NewResourceList(1*testhelper.ResourceUnitCPU, 2*testhelper.ResourceUnitMem, testhelper.ResourceUnitZero),
-					},
+					Cluster:             "fake",
+					ReplicaRequirements: (&pb.ReplicaRequirements{}).MustSetResourceRequest(testhelper.NewResourceList(1*testhelper.ResourceUnitCPU, 2*testhelper.ResourceUnitMem, testhelper.ResourceUnitZero)),
 				},
 			},
 		},
@@ -319,14 +342,11 @@ func BenchmarkAccurateSchedulerEstimatorServer_MaxAvailableReplicas(b *testing.B
 			args: args{
 				request: &pb.MaxAvailableReplicasRequest{
 					Cluster: "fake",
-					ReplicaRequirements: pb.ReplicaRequirements{
-						NodeClaim: &pb.NodeClaim{
-							Tolerations: []corev1.Toleration{
-								{Key: "key1", Operator: corev1.TolerationOpEqual, Value: "value1"},
-							},
-						},
-						ResourceRequest: testhelper.NewResourceList(1*testhelper.ResourceUnitCPU, 2*testhelper.ResourceUnitMem, testhelper.ResourceUnitZero),
-					},
+					ReplicaRequirements: (&pb.ReplicaRequirements{
+						NodeClaim: (&pb.NodeClaim{}).MustSetTolerations([]corev1.Toleration{
+							{Key: "key1", Operator: corev1.TolerationOpEqual, Value: "value1"},
+						}),
+					}).MustSetResourceRequest(testhelper.NewResourceList(1*testhelper.ResourceUnitCPU, 2*testhelper.ResourceUnitMem, testhelper.ResourceUnitZero)),
 				},
 			},
 		},
@@ -340,35 +360,30 @@ func BenchmarkAccurateSchedulerEstimatorServer_MaxAvailableReplicas(b *testing.B
 			args: args{
 				request: &pb.MaxAvailableReplicasRequest{
 					Cluster: "fake",
-					ReplicaRequirements: pb.ReplicaRequirements{
-						NodeClaim: &pb.NodeClaim{
-							NodeAffinity: &corev1.NodeSelector{
-								NodeSelectorTerms: []corev1.NodeSelectorTerm{
-									{
-										MatchExpressions: []corev1.NodeSelectorRequirement{
-											{
-												Key:      "a",
-												Operator: corev1.NodeSelectorOpGt,
-												Values:   []string{"0"},
-											},
+					ReplicaRequirements: (&pb.ReplicaRequirements{
+						NodeClaim: (&pb.NodeClaim{}).MustSetNodeAffinity(&corev1.NodeSelector{
+							NodeSelectorTerms: []corev1.NodeSelectorTerm{
+								{
+									MatchExpressions: []corev1.NodeSelectorRequirement{
+										{
+											Key:      "a",
+											Operator: corev1.NodeSelectorOpGt,
+											Values:   []string{"0"},
 										},
 									},
 								},
 							},
-							Tolerations: []corev1.Toleration{
-								{Key: "key1", Operator: corev1.TolerationOpEqual, Value: "value1"},
-							},
-						},
-						ResourceRequest: testhelper.NewResourceList(1*testhelper.ResourceUnitCPU, 2*testhelper.ResourceUnitMem, testhelper.ResourceUnitZero),
-					},
+						}).MustSetTolerations([]corev1.Toleration{
+							{Key: "key1", Operator: corev1.TolerationOpEqual, Value: "value1"},
+						}),
+					}).MustSetResourceRequest(testhelper.NewResourceList(1*testhelper.ResourceUnitCPU, 2*testhelper.ResourceUnitMem, testhelper.ResourceUnitZero)),
 				},
 			},
 		},
 	}
 	for _, tt := range tests {
 		b.Run(tt.name, func(b *testing.B) {
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
+			ctx := b.Context()
 
 			ctx = metadata.NewIncomingContext(ctx, metadata.Pairs(string(util.ContextKeyObject), "fake"))
 
@@ -396,7 +411,7 @@ func BenchmarkAccurateSchedulerEstimatorServer_MaxAvailableReplicas(b *testing.B
 				objs = append(objs, pod)
 			}
 
-			es, _ := NewEstimatorServer(ctx, fake.NewSimpleClientset(objs...), dynamicClient, discoveryClient, opt)
+			es, _ := NewEstimatorServer(ctx, fake.NewClientset(objs...), dynamicClient, discoveryClient, opt)
 
 			es.informerFactory.Start(ctx.Done())
 			es.informerFactory.WaitForCacheSync(ctx.Done())

@@ -23,6 +23,7 @@ import (
 
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/informers"
@@ -221,10 +222,11 @@ func run(ctx context.Context, opts *options.Options) error {
 		},
 		Controller: config.Controller{
 			GroupKindConcurrency: map[string]int{
-				workv1alpha1.SchemeGroupVersion.WithKind("Work").GroupKind().String():       opts.ConcurrentWorkSyncs,
-				clusterv1alpha1.SchemeGroupVersion.WithKind("Cluster").GroupKind().String(): opts.ConcurrentClusterSyncs,
+				schema.GroupKind{Group: workv1alpha1.GroupName, Kind: "Work"}.String():       opts.ConcurrentWorkSyncs,
+				schema.GroupKind{Group: clusterv1alpha1.GroupName, Kind: "Cluster"}.String(): opts.ConcurrentClusterSyncs,
 			},
 			CacheSyncTimeout: opts.ClusterCacheSyncTimeout.Duration,
+			UsePriorityQueue: new(features.FeatureGate.Enabled(features.ControllerPriorityQueue)),
 		},
 		NewCache: func(config *rest.Config, opts cache.Options) (cache.Cache, error) {
 			opts.DefaultTransform = fedinformer.StripUnusedFields
@@ -271,10 +273,9 @@ func setupControllers(ctx context.Context, mgr controllerruntime.Manager, opts *
 	sharedFactory.WaitForCacheSync(ctx.Done())
 
 	resourceInterpreter := resourceinterpreter.NewResourceInterpreter(controlPlaneInformerManager, serviceLister)
-	if err := mgr.Add(resourceInterpreter); err != nil {
-		return fmt.Errorf("failed to setup custom resource interpreter: %w", err)
+	if err := resourceInterpreter.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start resource interpreter: %w", err)
 	}
-
 	rateLimiterGetter := util.GetClusterRateLimiterGetter().SetDefaultLimits(opts.ClusterAPIQPS, opts.ClusterAPIBurst)
 	clusterClientOption := &util.ClientOption{RateLimiterGetter: rateLimiterGetter.GetRateLimiter}
 
@@ -320,7 +321,7 @@ func startClusterStatusController(ctx controllerscontext.Context) (bool, error) 
 	clusterStatusController := &status.ClusterStatusController{
 		Client:                            ctx.Mgr.GetClient(),
 		KubeClient:                        kubeclientset.NewForConfigOrDie(ctx.Mgr.GetConfig()),
-		EventRecorder:                     ctx.Mgr.GetEventRecorderFor(status.ControllerName),
+		EventRecorder:                     ctx.Mgr.GetEventRecorderFor(status.ControllerName), //nolint:staticcheck // Note: GetEventRecorderFor is deprecated in controller-runtime v0.23.0 in favor of GetEventRecorder. This changes event API from v1 events to events.k8s.io. We need to migrate carefully, especially considering the impact on users and RBAC permission changes in installation/deployment tools.
 		PredicateFunc:                     helper.NewClusterPredicateOnAgent(ctx.Opts.ClusterName),
 		TypedInformerManager:              typedmanager.GetInstance(),
 		GenericInformerManager:            genericmanager.GetInstance(),
@@ -345,7 +346,7 @@ func startClusterStatusController(ctx controllerscontext.Context) (bool, error) 
 func startExecutionController(ctx controllerscontext.Context) (bool, error) {
 	executionController := &execution.Controller{
 		Client:             ctx.Mgr.GetClient(),
-		EventRecorder:      ctx.Mgr.GetEventRecorderFor(execution.ControllerName),
+		EventRecorder:      ctx.Mgr.GetEventRecorderFor(execution.ControllerName), //nolint:staticcheck // Note: GetEventRecorderFor is deprecated in controller-runtime v0.23.0 in favor of GetEventRecorder. This changes event API from v1 events to events.k8s.io. We need to migrate carefully, especially considering the impact on users and RBAC permission changes in installation/deployment tools.
 		RESTMapper:         ctx.Mgr.GetRESTMapper(),
 		ObjectWatcher:      ctx.ObjectWatcher,
 		InformerManager:    genericmanager.GetInstance(),
@@ -360,7 +361,7 @@ func startExecutionController(ctx controllerscontext.Context) (bool, error) {
 func startWorkStatusController(ctx controllerscontext.Context) (bool, error) {
 	workStatusController := &status.WorkStatusController{
 		Client:                      ctx.Mgr.GetClient(),
-		EventRecorder:               ctx.Mgr.GetEventRecorderFor(status.WorkStatusControllerName),
+		EventRecorder:               ctx.Mgr.GetEventRecorderFor(status.WorkStatusControllerName), //nolint:staticcheck // Note: GetEventRecorderFor is deprecated in controller-runtime v0.23.0 in favor of GetEventRecorder. This changes event API from v1 events to events.k8s.io. We need to migrate carefully, especially considering the impact on users and RBAC permission changes in installation/deployment tools.
 		RESTMapper:                  ctx.Mgr.GetRESTMapper(),
 		InformerManager:             genericmanager.GetInstance(),
 		Context:                     ctx.Context,
@@ -381,7 +382,7 @@ func startWorkStatusController(ctx controllerscontext.Context) (bool, error) {
 func startServiceExportController(ctx controllerscontext.Context) (bool, error) {
 	serviceExportController := &mcs.ServiceExportController{
 		Client:                      ctx.Mgr.GetClient(),
-		EventRecorder:               ctx.Mgr.GetEventRecorderFor(mcs.ServiceExportControllerName),
+		EventRecorder:               ctx.Mgr.GetEventRecorderFor(mcs.ServiceExportControllerName), //nolint:staticcheck // Note: GetEventRecorderFor is deprecated in controller-runtime v0.23.0 in favor of GetEventRecorder. This changes event API from v1 events to events.k8s.io. We need to migrate carefully, especially considering the impact on users and RBAC permission changes in installation/deployment tools.
 		RESTMapper:                  ctx.Mgr.GetRESTMapper(),
 		InformerManager:             genericmanager.GetInstance(),
 		Context:                     ctx.Context,
@@ -428,7 +429,7 @@ func startCertRotationController(ctx controllerscontext.Context) (bool, error) {
 	certRotationController := &certificate.CertRotationController{
 		Client:                             ctx.Mgr.GetClient(),
 		KubeClient:                         kubeclientset.NewForConfigOrDie(ctx.Mgr.GetConfig()),
-		EventRecorder:                      ctx.Mgr.GetEventRecorderFor(certificate.CertRotationControllerName),
+		EventRecorder:                      ctx.Mgr.GetEventRecorderFor(certificate.CertRotationControllerName), //nolint:staticcheck // Note: GetEventRecorderFor is deprecated in controller-runtime v0.23.0 in favor of GetEventRecorder. This changes event API from v1 events to events.k8s.io. We need to migrate carefully, especially considering the impact on users and RBAC permission changes in installation/deployment tools.
 		RESTMapper:                         ctx.Mgr.GetRESTMapper(),
 		ClusterClientSetFunc:               util.NewClusterClientSetForAgent,
 		PredicateFunc:                      helper.NewClusterPredicateOnAgent(ctx.Opts.ClusterName),

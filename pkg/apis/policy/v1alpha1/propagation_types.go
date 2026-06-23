@@ -289,14 +289,40 @@ const (
 	// at the same time. During a failover, it is crucial to ensure that the old
 	// application is removed before creating a new one to avoid duplicate
 	// processing and maintaining state consistency.
+	//
+	// Deprecated: The term `Immediately` may be confusing when used alongside
+	// `GracePeriodSeconds`, which specifies that resources are removed after
+	// a grace period rather than at once.
+	// `Immediately` is replaced by `Directly` for clarity. This term remains
+	// functional in the current API version for backward compatibility and will
+	// be removed when PropagationPolicy advances to alpha2 or beta.
 	Immediately PurgeMode = "Immediately"
 	// Graciously represents that Karmada will wait for the application to
 	// come back to healthy on the new cluster or after a timeout is reached
 	// before evicting the application.
+	//
+	// Deprecated: The term `Graciously` is replaced by `Gracefully` for correct
+	// English usage. This term remains functional in the current API version for
+	// backward compatibility and will be removed when PropagationPolicy advances
+	// to alpha2 or beta.
 	Graciously PurgeMode = "Graciously"
 	// Never represents that Karmada will not evict the application and
 	// users manually confirms how to clean up redundant copies.
 	Never PurgeMode = "Never"
+
+	// PurgeModeDirectly represents that Karmada will directly evict the legacy
+	// application. This is useful in scenarios where an application can not
+	// tolerate two instances running simultaneously.
+	// For example, the Flink application supports exactly-once state consistency,
+	// which means it requires that no two instances of the application are running
+	// at the same time. During a failover, it is crucial to ensure that the old
+	// application is removed before creating a new one to avoid duplicate
+	// processing and maintaining state consistency.
+	PurgeModeDirectly PurgeMode = "Directly"
+	// PurgeModeGracefully represents that Karmada will wait for the application to
+	// come back to healthy on the new cluster or after a timeout is reached
+	// before evicting the application.
+	PurgeModeGracefully PurgeMode = "Gracefully"
 )
 
 // FailoverBehavior indicates failover behaviors in case of an application or
@@ -310,9 +336,13 @@ type FailoverBehavior struct {
 	Application *ApplicationFailoverBehavior `json:"application,omitempty"`
 
 	// Cluster indicates failover behaviors in case of cluster failure.
-	// If this value is nil, failover is disabled.
+	// If this value is nil, the failover behavior in case of cluster failure
+	// will be controlled by the controller's no-execute-taint-eviction-purge-mode
+	// parameter.
+	// If set, the failover behavior in case of cluster failure will be defined
+	// by this value.
 	// +optional
-	// Cluster *ClusterFailoverBehavior `json:"cluster,omitempty"`
+	Cluster *ClusterFailoverBehavior `json:"cluster,omitempty"`
 }
 
 // ApplicationFailoverBehavior indicates application failover behaviors.
@@ -326,10 +356,11 @@ type ApplicationFailoverBehavior struct {
 
 	// PurgeMode represents how to deal with the legacy applications on the
 	// cluster from which the application is migrated.
-	// Valid options are "Immediately", "Graciously" and "Never".
-	// Defaults to "Graciously".
-	// +kubebuilder:validation:Enum=Immediately;Graciously;Never
-	// +kubebuilder:default=Graciously
+	// Valid options are "Directly", "Gracefully", "Never", "Immediately"(deprecated),
+	// and "Graciously"(deprecated).
+	// Defaults to "Gracefully".
+	// +kubebuilder:validation:Enum=Directly;Gracefully;Never;Immediately;Graciously
+	// +kubebuilder:default=Gracefully
 	// +optional
 	PurgeMode PurgeMode `json:"purgeMode,omitempty"`
 
@@ -360,12 +391,42 @@ type ApplicationFailoverBehavior struct {
 	StatePreservation *StatePreservation `json:"statePreservation,omitempty"`
 }
 
+// ClusterFailoverBehavior indicates cluster failover behaviors.
+type ClusterFailoverBehavior struct {
+	// PurgeMode represents how to deal with the legacy applications on the
+	// cluster from which the application is migrated.
+	// Valid options are "Directly", "Gracefully".
+	// Defaults to "Gracefully".
+	// +kubebuilder:validation:Enum=Directly;Gracefully
+	// +kubebuilder:default=Gracefully
+	// +optional
+	PurgeMode PurgeMode `json:"purgeMode,omitempty"`
+
+	// StatePreservation defines the policy for preserving and restoring state data
+	// during failover events for stateful applications.
+	//
+	// When an application fails over from one cluster to another, this policy enables
+	// the extraction of critical data from the original resource configuration.
+	// Upon successful migration, the extracted data is then re-injected into the new
+	// resource, ensuring that the application can resume operation with its previous
+	// state intact.
+	// This is particularly useful for stateful applications where maintaining data
+	// consistency across failover events is crucial.
+	// If not specified, means no state data will be preserved.
+	//
+	// Note: This requires the StatefulFailoverInjection feature gate to be enabled,
+	// which is alpha.
+	// +optional
+	StatePreservation *StatePreservation `json:"statePreservation,omitempty"`
+}
+
 // DecisionConditions represents the decision conditions of performing the failover process.
 type DecisionConditions struct {
 	// TolerationSeconds represents the period of time Karmada should wait
 	// after reaching the desired state before performing failover process.
-	// If not specified, Karmada will immediately perform failover process.
-	// Defaults to 300s.
+	//
+	// Defaults to 300s if not specified.
+	// Set it to 0 to perform failover immediately.
 	// +kubebuilder:default=300
 	// +optional
 	TolerationSeconds *int32 `json:"tolerationSeconds,omitempty"`
@@ -461,6 +522,11 @@ type Placement struct {
 	// when propagating resources that have replicas in spec (e.g. deployments, statefulsets) to member clusters.
 	// +optional
 	ReplicaScheduling *ReplicaSchedulingStrategy `json:"replicaScheduling,omitempty"`
+
+	// WorkloadAffinity represents inter-workload affinity and anti-affinity
+	// scheduling policies.
+	// +optional
+	WorkloadAffinity *WorkloadAffinity `json:"workloadAffinity,omitempty"`
 }
 
 // SpreadFieldValue is the type to define valid values for SpreadConstraint.SpreadByField
@@ -528,6 +594,108 @@ type ClusterAffinity struct {
 
 // ClusterAffinityTerm selects a set of cluster.
 type ClusterAffinityTerm struct {
+	// AffinityName is the name of the cluster group.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=32
+	// +required
+	AffinityName string `json:"affinityName"`
+
+	ClusterAffinity `json:",inline"`
+
+	// OverflowAffinities defines additional cluster groups that the scheduler
+	// can progressively include when the primary group (defined by the inline
+	// ClusterAffinity) has insufficient resources. Groups are expanded in order
+	// and contracted in reverse during scale-down.
+	// Can only be used together with the inline ClusterAffinity (the inline
+	// ClusterAffinity serves as the primary/preferred group).
+	// If a cluster appears in multiple OverflowClusterAffinity entries, it is
+	// scheduled according to the first entry in which it appears; subsequent
+	// occurrences of the same cluster are ignored.
+	// +optional
+	OverflowAffinities []OverflowClusterAffinity `json:"overflowAffinities,omitempty"`
+}
+
+// WorkloadAffinity defines inter-workload affinity and anti-affinity rules.
+type WorkloadAffinity struct {
+	// Affinity represents inter-workload affinity scheduling rules.
+	// These are hard requirements: workloads will only be scheduled to clusters
+	// that satisfy the affinity term if it is specified.
+	//
+	// For the first workload of an affinity group (when no workloads with a
+	// matching label value exist in the system), the scheduler will not block
+	// scheduling. This allows bootstrapping new workload groups without
+	// encountering scheduling deadlocks, providing a better user experience.
+	//
+	// +optional
+	Affinity *WorkloadAffinityTerm `json:"affinity,omitempty"`
+
+	// AntiAffinity represents inter-workload anti-affinity scheduling rules.
+	// These are hard requirements: workloads will be scheduled to avoid clusters
+	// where matching workloads are already scheduled.
+	//
+	// +optional
+	AntiAffinity *WorkloadAntiAffinityTerm `json:"antiAffinity,omitempty"`
+
+	// Note: Both Affinity and AntiAffinity terms, if specified, are required to be
+	// satisfied during scheduling. If more flexible rules are needed (for example,
+	// preferred scheduling), PreferredAffinity and PreferredAntiAffinity fields
+	// can be added in the future.
+}
+
+// WorkloadAntiAffinityTerm defines anti-affinity rules for separating workloads
+// from specific workload groups.
+type WorkloadAntiAffinityTerm struct {
+	// GroupByLabelKey declares the label key on the workload resource template that
+	// determines the anti-affinity group. Workloads with the same label value under
+	// this key belong to the same anti-affinity group and will be separated.
+	//
+	// The scheduler maintains a global index of affinity groups in memory for
+	// efficient lookup. Each affinity group is identified by a serialized
+	// key-value pair and contains all workload resource templates that belong
+	// to the group.
+	//
+	// Note: Affinity groups are scoped to the namespace. Workloads that use the
+	// same anti-affinity label but reside in different namespaces are not treated
+	// as part of the same group.
+	//
+	// The key must be a valid Kubernetes label key.
+	//
+	// Example: If GroupByLabelKey is "app.group", workloads with the label
+	// "app.group=frontend" will avoid clusters where other
+	// "app.group=frontend" workloads already exist.
+	//
+	// +required
+	GroupByLabelKey string `json:"groupByLabelKey"`
+}
+
+// WorkloadAffinityTerm defines affinity rules for co-locating workloads with
+// specific workload groups.
+type WorkloadAffinityTerm struct {
+	// GroupByLabelKey declares the label key on the workload resource template that
+	// determines the affinity group. Workloads with the same label value under
+	// this key belong to the same affinity group.
+	//
+	// The scheduler maintains a global index of affinity groups in memory for
+	// efficient lookup. Each affinity group is identified by a serialized
+	// key-value pair and contains all workload resource templates that belong
+	// to the group.
+	//
+	// Note: Affinity groups are scoped to the namespace. Workloads that use the
+	// same affinity label but reside in different namespaces are not treated
+	// as part of the same group.
+	//
+	// The key must be a valid Kubernetes label key.
+	//
+	// Example: If GroupByLabelKey is "app.group", workloads with the label
+	// "app.group=frontend" will form one affinity group, while those with
+	// "app.group=backend" will form another.
+	//
+	// +required
+	GroupByLabelKey string `json:"groupByLabelKey"`
+}
+
+// OverflowClusterAffinity represents an overflow tier of candidate clusters.
+type OverflowClusterAffinity struct {
 	// AffinityName is the name of the cluster group.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=32

@@ -19,15 +19,17 @@ package helper
 import (
 	"context"
 	"reflect"
-	"sort"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/dynamic"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
@@ -50,7 +52,196 @@ const (
 	ClusterMember1 = "member1"
 	ClusterMember2 = "member2"
 	ClusterMember3 = "member3"
+	emptyUID       = ""
+	evenUID        = "4858ca61-3ff8-4095-8267-f3d059d8074c"
+	oddUID         = "d43fdeeb-d750-4e2b-bee3-64eb94534f4c"
 )
+
+func Test_dispenser_AllocateByWeight(t *testing.T) {
+	tests := []struct {
+		name              string
+		newReplicas       int32
+		initialAssignment []workv1alpha2.TargetCluster
+		weightList        ClusterWeightInfoList
+		desired           []workv1alpha2.TargetCluster
+		uuid              types.UID
+	}{
+		{
+			name:        "Scale up 6 replicas",
+			newReplicas: 6,
+			uuid:        emptyUID,
+			initialAssignment: []workv1alpha2.TargetCluster{
+				{Name: "A", Replicas: 1},
+				{Name: "B", Replicas: 2},
+				{Name: "C", Replicas: 3},
+			},
+			weightList: []ClusterWeightInfo{
+				{ClusterName: "A", Weight: 1},
+				{ClusterName: "B", Weight: 2},
+				{ClusterName: "C", Weight: 3},
+			},
+			desired: []workv1alpha2.TargetCluster{
+				{Name: "A", Replicas: 2},
+				{Name: "B", Replicas: 4},
+				{Name: "C", Replicas: 6},
+			},
+		},
+		{
+			name:        "Scale up 3 replicas",
+			newReplicas: 3,
+			uuid:        emptyUID,
+			initialAssignment: []workv1alpha2.TargetCluster{
+				{Name: "A", Replicas: 1},
+				{Name: "B", Replicas: 2},
+				{Name: "C", Replicas: 3},
+			},
+			weightList: []ClusterWeightInfo{
+				{ClusterName: "A", Weight: 1},
+				{ClusterName: "B", Weight: 2},
+				{ClusterName: "C", Weight: 3},
+			},
+			desired: []workv1alpha2.TargetCluster{
+				{Name: "A", Replicas: 2},
+				{Name: "B", Replicas: 3},
+				{Name: "C", Replicas: 4},
+			},
+		},
+		{
+			name:        "Scale up 2 replicas",
+			newReplicas: 2,
+			uuid:        emptyUID,
+			initialAssignment: []workv1alpha2.TargetCluster{
+				{Name: "A", Replicas: 1},
+				{Name: "B", Replicas: 2},
+				{Name: "C", Replicas: 3},
+			},
+			weightList: []ClusterWeightInfo{
+				{ClusterName: "A", Weight: 1},
+				{ClusterName: "B", Weight: 2},
+				{ClusterName: "C", Weight: 3},
+			},
+			desired: []workv1alpha2.TargetCluster{
+				{Name: "A", Replicas: 1},
+				{Name: "B", Replicas: 3},
+				{Name: "C", Replicas: 4},
+			},
+		},
+		{
+			name:              "HA scenario with weight 2:1: assign 1 replica",
+			newReplicas:       1,
+			uuid:              emptyUID,
+			initialAssignment: nil,
+			weightList: []ClusterWeightInfo{
+				{ClusterName: "A", Weight: 2},
+				{ClusterName: "B", Weight: 1},
+			},
+			desired: []workv1alpha2.TargetCluster{
+				{Name: "A", Replicas: 1},
+				{Name: "B", Replicas: 0},
+			},
+		},
+		{
+			name:              "HA scenario with weight 2:1: assign 2 replicas",
+			newReplicas:       2,
+			uuid:              emptyUID,
+			initialAssignment: nil,
+			weightList: []ClusterWeightInfo{
+				{ClusterName: "A", Weight: 2},
+				{ClusterName: "B", Weight: 1},
+			},
+			desired: []workv1alpha2.TargetCluster{
+				{Name: "A", Replicas: 1},
+				{Name: "B", Replicas: 1},
+			},
+		},
+		{
+			name:              "HA scenario with weight 2:1: assign 3 replicas",
+			newReplicas:       3,
+			uuid:              emptyUID,
+			initialAssignment: nil,
+			weightList: []ClusterWeightInfo{
+				{ClusterName: "A", Weight: 2},
+				{ClusterName: "B", Weight: 1},
+			},
+			desired: []workv1alpha2.TargetCluster{
+				{Name: "A", Replicas: 2},
+				{Name: "B", Replicas: 1},
+			},
+		},
+		{
+			name:              "brand new assign 5 replicas",
+			newReplicas:       5,
+			uuid:              emptyUID,
+			initialAssignment: nil,
+			weightList: []ClusterWeightInfo{
+				{ClusterName: "A", Weight: 170},
+				{ClusterName: "B", Weight: 110},
+				{ClusterName: "C", Weight: 60},
+			},
+			desired: []workv1alpha2.TargetCluster{
+				{Name: "A", Replicas: 2},
+				{Name: "B", Replicas: 2},
+				{Name: "C", Replicas: 1},
+			},
+		},
+		{
+			name:              "brand new assign 6 replicas",
+			newReplicas:       6,
+			uuid:              emptyUID,
+			initialAssignment: nil,
+			weightList: []ClusterWeightInfo{
+				{ClusterName: "A", Weight: 170},
+				{ClusterName: "B", Weight: 110},
+				{ClusterName: "C", Weight: 60},
+			},
+			desired: []workv1alpha2.TargetCluster{
+				{Name: "A", Replicas: 3},
+				{Name: "B", Replicas: 2},
+				{Name: "C", Replicas: 1},
+			},
+		},
+		{
+			name:              "brand new assign 5 replicas with odd uuid",
+			newReplicas:       5,
+			uuid:              oddUID,
+			initialAssignment: nil,
+			weightList: []ClusterWeightInfo{
+				{ClusterName: "A", Weight: 1},
+				{ClusterName: "B", Weight: 1},
+			},
+			desired: []workv1alpha2.TargetCluster{
+				{Name: "A", Replicas: 2},
+				{Name: "B", Replicas: 3},
+			},
+		},
+		{
+			name:              "brand new assign 5 replicas with even uuid",
+			newReplicas:       5,
+			uuid:              evenUID,
+			initialAssignment: nil,
+			weightList: []ClusterWeightInfo{
+				{ClusterName: "A", Weight: 1},
+				{ClusterName: "B", Weight: 1},
+			},
+			desired: []workv1alpha2.TargetCluster{
+				{Name: "A", Replicas: 3},
+				{Name: "B", Replicas: 2},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := NewDispenser(tt.newReplicas, tt.initialAssignment, tt.uuid)
+			a.AllocateByWeight(tt.weightList)
+			if !a.Done() {
+				t.Errorf("dispensing unexpectedly not finished")
+			}
+			if !testhelper.IsScheduleResultEqual(a.Result, tt.desired) {
+				t.Errorf("expected result after AllocateByWeight: %v, but got: %v", tt.desired, a.Result)
+			}
+		})
+	}
+}
 
 func TestDispenseReplicasByTargetClusters(t *testing.T) {
 	type args struct {
@@ -232,7 +423,7 @@ func TestDispenseReplicasByTargetClusters(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := SpreadReplicasByTargetClusters(tt.args.sum, tt.args.clusters, nil)
+			got := SpreadReplicasByTargetClusters(tt.args.sum, tt.args.clusters, nil, "")
 			for _, want := range tt.wants {
 				if testhelper.IsScheduleResultEqual(got, want) {
 					return
@@ -353,11 +544,11 @@ func TestObtainBindingSpecExistingClusters(t *testing.T) {
 				GracefulEvictionTasks: []workv1alpha2.GracefulEvictionTask{
 					{
 						FromCluster: "member3",
-						PurgeMode:   policyv1alpha1.Immediately,
+						PurgeMode:   policyv1alpha1.PurgeModeDirectly,
 					},
 					{
 						FromCluster: "member4",
-						PurgeMode:   policyv1alpha1.Graciously,
+						PurgeMode:   policyv1alpha1.PurgeModeGracefully,
 					},
 					{
 						FromCluster: "member5",
@@ -372,66 +563,6 @@ func TestObtainBindingSpecExistingClusters(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := ObtainBindingSpecExistingClusters(tt.bindingSpec); !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("ObtainBindingSpecExistingClusters() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-// sortClusterByWeight sort clusters by the weight
-func sortClusterByWeight(m map[string]int64) ClusterWeightInfoList {
-	p := make(ClusterWeightInfoList, len(m))
-	i := 0
-	for k, v := range m {
-		p[i] = ClusterWeightInfo{ClusterName: k, Weight: v}
-		i++
-	}
-	sort.Sort(p)
-	return p
-}
-
-func TestSortClusterByWeight(t *testing.T) {
-	type args struct {
-		m map[string]int64
-	}
-	tests := []struct {
-		name string
-		args args
-		want ClusterWeightInfoList
-	}{
-		{
-			name: "nil",
-			args: args{
-				m: nil,
-			},
-			want: []ClusterWeightInfo{},
-		},
-		{
-			name: "empty",
-			args: args{
-				m: map[string]int64{},
-			},
-			want: []ClusterWeightInfo{},
-		},
-		{
-			name: "sort",
-			args: args{
-				m: map[string]int64{
-					"cluster11": 1,
-					"cluster12": 2,
-					"cluster13": 3,
-				},
-			},
-			want: []ClusterWeightInfo{
-				{ClusterName: "cluster13", Weight: 3},
-				{ClusterName: "cluster12", Weight: 2},
-				{ClusterName: "cluster11", Weight: 1},
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := sortClusterByWeight(tt.args.m); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("SortClusterByWeight() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -609,6 +740,196 @@ func TestFindOrphanWorks(t *testing.T) {
 	}
 }
 
+func TestFindWorksInClusters(t *testing.T) {
+	type args struct {
+		c                client.Client
+		bindingNamespace string
+		bindingName      string
+		bindingID        string
+		targetClusters   sets.Set[string]
+	}
+	tests := []struct {
+		name    string
+		args    args
+		want    []workv1alpha1.Work
+		wantErr bool
+	}{
+		{
+			name: "namespace scope: no works in target clusters",
+			args: args{
+				c: fake.NewClientBuilder().WithScheme(gclient.NewSchema()).WithObjects(
+					&workv1alpha1.Work{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:            "work1",
+							Namespace:       names.ExecutionSpacePrefix + "cluster1",
+							ResourceVersion: "999",
+							Labels: map[string]string{
+								workv1alpha2.ResourceBindingPermanentIDLabel: "binding-id",
+							},
+						},
+					},
+					&workv1alpha1.Work{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:            "work2",
+							Namespace:       names.ExecutionSpacePrefix + "cluster2",
+							ResourceVersion: "999",
+							Labels: map[string]string{
+								workv1alpha2.ResourceBindingPermanentIDLabel: "binding-id",
+							},
+						},
+					},
+				).WithIndex(
+					&workv1alpha1.Work{},
+					indexregistry.WorkIndexByLabelResourceBindingID,
+					indexregistry.GenLabelIndexerFunc(workv1alpha2.ResourceBindingPermanentIDLabel),
+				).Build(),
+				bindingNamespace: "default",
+				bindingName:      "test-binding",
+				bindingID:        "binding-id",
+				targetClusters:   sets.New("cluster3"),
+			},
+			want:    nil,
+			wantErr: false,
+		},
+		{
+			name: "namespace scope: some works in target clusters",
+			args: args{
+				c: fake.NewClientBuilder().WithScheme(gclient.NewSchema()).WithObjects(
+					&workv1alpha1.Work{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:            "work1",
+							Namespace:       names.ExecutionSpacePrefix + "cluster1",
+							ResourceVersion: "999",
+							Labels: map[string]string{
+								workv1alpha2.ResourceBindingPermanentIDLabel: "binding-id",
+							},
+						},
+					},
+					&workv1alpha1.Work{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:            "work2",
+							Namespace:       names.ExecutionSpacePrefix + "cluster2",
+							ResourceVersion: "999",
+							Labels: map[string]string{
+								workv1alpha2.ResourceBindingPermanentIDLabel: "binding-id",
+							},
+						},
+					},
+				).WithIndex(
+					&workv1alpha1.Work{},
+					indexregistry.WorkIndexByLabelResourceBindingID,
+					indexregistry.GenLabelIndexerFunc(workv1alpha2.ResourceBindingPermanentIDLabel),
+				).Build(),
+				bindingNamespace: "default",
+				bindingName:      "test-binding",
+				bindingID:        "binding-id",
+				targetClusters:   sets.New("cluster1"),
+			},
+			want: []workv1alpha1.Work{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:            "work1",
+						Namespace:       names.ExecutionSpacePrefix + "cluster1",
+						ResourceVersion: "999",
+						Labels: map[string]string{
+							workv1alpha2.ResourceBindingPermanentIDLabel: "binding-id",
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "namespace scope: error getting cluster name",
+			args: args{
+				c: fake.NewClientBuilder().WithScheme(gclient.NewSchema()).WithObjects(
+					&workv1alpha1.Work{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:            "work1",
+							Namespace:       "invalid-namespace",
+							ResourceVersion: "999",
+							Labels: map[string]string{
+								workv1alpha2.ResourceBindingPermanentIDLabel: "binding-id",
+							},
+						},
+					},
+				).WithIndex(
+					&workv1alpha1.Work{},
+					indexregistry.WorkIndexByLabelResourceBindingID,
+					indexregistry.GenLabelIndexerFunc(workv1alpha2.ResourceBindingPermanentIDLabel),
+				).Build(),
+				bindingNamespace: "default",
+				bindingName:      "test-binding",
+				bindingID:        "binding-id",
+				targetClusters:   sets.New("cluster1"),
+			},
+			want:    nil,
+			wantErr: true,
+		},
+		{
+			name: "cluster scope: some works in target clusters",
+			args: args{
+				c: fake.NewClientBuilder().WithScheme(gclient.NewSchema()).WithObjects(
+					&workv1alpha1.Work{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:            "work3",
+							Namespace:       names.ExecutionSpacePrefix + "clusterA",
+							ResourceVersion: "999",
+							Labels: map[string]string{
+								workv1alpha2.ClusterResourceBindingPermanentIDLabel: "cluster-binding-id",
+							},
+						},
+					},
+					&workv1alpha1.Work{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:            "work4",
+							Namespace:       names.ExecutionSpacePrefix + "clusterB",
+							ResourceVersion: "999",
+							Labels: map[string]string{
+								workv1alpha2.ClusterResourceBindingPermanentIDLabel: "cluster-binding-id",
+							},
+						},
+					},
+				).WithIndex(
+					&workv1alpha1.Work{},
+					indexregistry.WorkIndexByLabelClusterResourceBindingID,
+					indexregistry.GenLabelIndexerFunc(workv1alpha2.ClusterResourceBindingPermanentIDLabel),
+				).Build(),
+				bindingNamespace: "",
+				bindingName:      "cluster-binding",
+				bindingID:        "cluster-binding-id",
+				targetClusters:   sets.New("clusterA"),
+			},
+			want: []workv1alpha1.Work{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:            "work3",
+						Namespace:       names.ExecutionSpacePrefix + "clusterA",
+						ResourceVersion: "999",
+						Labels: map[string]string{
+							workv1alpha2.ClusterResourceBindingPermanentIDLabel: "cluster-binding-id",
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := FindWorksInClusters(context.TODO(), tt.args.c, tt.args.bindingNamespace, tt.args.bindingName, tt.args.bindingID, tt.args.targetClusters)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("FindWorksInClusters() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("FindWorksInClusters() got = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRemoveOrphanWorks(t *testing.T) {
 	makeWork := func(name string) *workv1alpha1.Work {
 		return &workv1alpha1.Work{
@@ -735,13 +1056,12 @@ func TestFetchWorkload(t *testing.T) {
 					Name:       "pod",
 				},
 			},
-			want: &unstructured.Unstructured{Object: map[string]interface{}{
+			want: &unstructured.Unstructured{Object: map[string]any{
 				"apiVersion": "v1",
 				"kind":       "Pod",
-				"metadata": map[string]interface{}{
-					"name":              "pod",
-					"namespace":         "default",
-					"creationTimestamp": nil,
+				"metadata": map[string]any{
+					"name":      "pod",
+					"namespace": "default",
 				},
 			}},
 			wantErr: false,
@@ -771,13 +1091,12 @@ func TestFetchWorkload(t *testing.T) {
 					Name:       "pod",
 				},
 			},
-			want: &unstructured.Unstructured{Object: map[string]interface{}{
+			want: &unstructured.Unstructured{Object: map[string]any{
 				"apiVersion": "v1",
 				"kind":       "Pod",
-				"metadata": map[string]interface{}{
-					"name":              "pod",
-					"namespace":         "default",
-					"creationTimestamp": nil,
+				"metadata": map[string]any{
+					"name":      "pod",
+					"namespace": "default",
 				},
 			}},
 			wantErr: false,
@@ -801,12 +1120,11 @@ func TestFetchWorkload(t *testing.T) {
 					Name:       "node",
 				},
 			},
-			want: &unstructured.Unstructured{Object: map[string]interface{}{
+			want: &unstructured.Unstructured{Object: map[string]any{
 				"apiVersion": "v1",
 				"kind":       "Node",
-				"metadata": map[string]interface{}{
-					"name":              "node",
-					"creationTimestamp": nil,
+				"metadata": map[string]any{
+					"name": "node",
 				},
 			}},
 			wantErr: false,
@@ -835,12 +1153,11 @@ func TestFetchWorkload(t *testing.T) {
 					Name:       "node",
 				},
 			},
-			want: &unstructured.Unstructured{Object: map[string]interface{}{
+			want: &unstructured.Unstructured{Object: map[string]any{
 				"apiVersion": "v1",
 				"kind":       "Node",
-				"metadata": map[string]interface{}{
-					"name":              "node",
-					"creationTimestamp": nil,
+				"metadata": map[string]any{
+					"name": "node",
 				},
 			}},
 			wantErr: false,
@@ -1253,6 +1570,606 @@ func TestConstructClusterWideKey(t *testing.T) {
 			}
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("ConstructClusterWideKey() got = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func compareResourceLists(t *testing.T, expected, actual corev1.ResourceList) {
+	for resourceName, expectedQuantity := range expected {
+		actualQuantity, exists := actual[resourceName]
+		assert.True(t, exists, "Resource %s is missing in actual result", resourceName)
+		assert.Equal(t, expectedQuantity.Value(), actualQuantity.Value(), "Resource %s value mismatch", resourceName)
+		assert.Equal(t, expectedQuantity.Format, actualQuantity.Format, "Resource %s format mismatch", resourceName)
+	}
+	assert.Equal(t, len(expected), len(actual), "Resource list length mismatch")
+}
+
+func TestCalculateResourceUsage(t *testing.T) {
+	tests := []struct {
+		name     string
+		rb       *workv1alpha2.ResourceBinding
+		expected corev1.ResourceList
+	}{
+		{
+			name: "Calculate usage with components",
+			rb: &workv1alpha2.ResourceBinding{
+				Spec: workv1alpha2.ResourceBindingSpec{
+					Clusters: []workv1alpha2.TargetCluster{
+						{Name: "cluster1"},
+						{Name: "cluster2"},
+					},
+					Components: []workv1alpha2.Component{
+						{
+							Replicas: 2,
+							ReplicaRequirements: &workv1alpha2.ComponentReplicaRequirements{
+								ResourceRequest: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("500m"),
+									corev1.ResourceMemory: resource.MustParse("1Gi"),
+								},
+							},
+						},
+					},
+				},
+			},
+			expected: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("2"),
+				corev1.ResourceMemory: resource.MustParse("4Gi"),
+			},
+		},
+		{
+			name: "Calculate usage with replica requirements",
+			rb: &workv1alpha2.ResourceBinding{
+				Spec: workv1alpha2.ResourceBindingSpec{
+					Clusters: []workv1alpha2.TargetCluster{
+						{Name: "cluster1", Replicas: 3},
+						{Name: "cluster2", Replicas: 2},
+					},
+					ReplicaRequirements: &workv1alpha2.ReplicaRequirements{
+						ResourceRequest: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("1"),
+							corev1.ResourceMemory: resource.MustParse("2Gi"),
+						},
+					},
+				},
+			},
+			expected: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("5"),
+				corev1.ResourceMemory: resource.MustParse("10Gi"),
+			},
+		},
+		{
+			name:     "Nil ResourceBinding",
+			rb:       nil,
+			expected: corev1.ResourceList{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := CalculateResourceUsage(tt.rb)
+			compareResourceLists(t, tt.expected, result)
+		})
+	}
+}
+
+func TestAggregateComponentResources(t *testing.T) {
+	tests := []struct {
+		name       string
+		components []workv1alpha2.Component
+		expected   corev1.ResourceList
+	}{
+		{
+			name: "Aggregate resources from components",
+			components: []workv1alpha2.Component{
+				{
+					Replicas: 2,
+					ReplicaRequirements: &workv1alpha2.ComponentReplicaRequirements{
+						ResourceRequest: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("500m"),
+							corev1.ResourceMemory: resource.MustParse("1Gi"),
+						},
+					},
+				},
+				{
+					Replicas: 3,
+					ReplicaRequirements: &workv1alpha2.ComponentReplicaRequirements{
+						ResourceRequest: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("1"),
+							corev1.ResourceMemory: resource.MustParse("2Gi"),
+						},
+					},
+				},
+			},
+			expected: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("4"),
+				corev1.ResourceMemory: resource.MustParse("8Gi"),
+			},
+		},
+		{
+			name: "No components",
+			components: []workv1alpha2.Component{
+				{
+					Replicas: 0,
+					ReplicaRequirements: &workv1alpha2.ComponentReplicaRequirements{
+						ResourceRequest: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("500m"),
+							corev1.ResourceMemory: resource.MustParse("1Gi"),
+						},
+					},
+				},
+			},
+			expected: corev1.ResourceList{},
+		},
+		{
+			name:       "Empty components",
+			components: []workv1alpha2.Component{},
+			expected:   corev1.ResourceList{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := aggregateComponentResources(tt.components)
+			compareResourceLists(t, tt.expected, result)
+		})
+	}
+}
+
+func TestFindTargetStatusItemByCluster(t *testing.T) {
+	tests := []struct {
+		name             string
+		aggregatedStatus []workv1alpha2.AggregatedStatusItem
+		cluster          string
+		expectedItem     workv1alpha2.AggregatedStatusItem
+		expectedFound    bool
+	}{
+		{
+			name:             "empty aggregated status list",
+			aggregatedStatus: []workv1alpha2.AggregatedStatusItem{},
+			cluster:          "member1",
+			expectedItem:     workv1alpha2.AggregatedStatusItem{},
+			expectedFound:    false,
+		},
+		{
+			name: "cluster not found in aggregated status list",
+			aggregatedStatus: []workv1alpha2.AggregatedStatusItem{
+				{ClusterName: "member2"},
+				{ClusterName: "member3"},
+			},
+			cluster:       "member1",
+			expectedItem:  workv1alpha2.AggregatedStatusItem{},
+			expectedFound: false,
+		},
+		{
+			name: "cluster found in aggregated status list",
+			aggregatedStatus: []workv1alpha2.AggregatedStatusItem{
+				{ClusterName: "member1", Status: &runtime.RawExtension{Raw: []byte(`{"key": "value"}`)}},
+				{ClusterName: "member2"},
+			},
+			cluster: "member1",
+			expectedItem: workv1alpha2.AggregatedStatusItem{
+				ClusterName: "member1",
+				Status:      &runtime.RawExtension{Raw: []byte(`{"key": "value"}`)},
+			},
+			expectedFound: true,
+		},
+		{
+			name: "multiple clusters with the same name, return the first match",
+			aggregatedStatus: []workv1alpha2.AggregatedStatusItem{
+				{ClusterName: "member1", Status: &runtime.RawExtension{Raw: []byte(`{"key1": "value1"}`)}},
+				{ClusterName: "member1", Status: &runtime.RawExtension{Raw: []byte(`{"key2": "value2"}`)}},
+			},
+			cluster: "member1",
+			expectedItem: workv1alpha2.AggregatedStatusItem{
+				ClusterName: "member1",
+				Status:      &runtime.RawExtension{Raw: []byte(`{"key1": "value1"}`)},
+			},
+			expectedFound: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			item, found := FindTargetStatusItemByCluster(tt.aggregatedStatus, tt.cluster)
+			assert.Equal(t, tt.expectedFound, found)
+			assert.Equal(t, tt.expectedItem.ClusterName, item.ClusterName)
+			if tt.expectedItem.Status != nil && item.Status != nil {
+				assert.Equal(t, tt.expectedItem.Status.Raw, item.Status.Raw)
+			} else {
+				assert.Nil(t, item.Status)
+				assert.Nil(t, tt.expectedItem.Status)
+			}
+		})
+	}
+}
+
+func TestObtainClustersWithPurgeModeDirectly(t *testing.T) {
+	tests := []struct {
+		name         string
+		bindingSpec  workv1alpha2.ResourceBindingSpec
+		wantClusters sets.Set[string]
+	}{
+		{
+			name: "Multiple clusters with different PurgeModes",
+			bindingSpec: workv1alpha2.ResourceBindingSpec{
+				GracefulEvictionTasks: []workv1alpha2.GracefulEvictionTask{
+					{
+						FromCluster: "cluster1",
+						PurgeMode:   policyv1alpha1.PurgeModeDirectly,
+					},
+					{
+						FromCluster: "cluster2",
+						PurgeMode:   policyv1alpha1.PurgeModeDirectly,
+					},
+					{
+						FromCluster: "cluster3",
+						PurgeMode:   policyv1alpha1.PurgeModeGracefully,
+					},
+				},
+			},
+			wantClusters: sets.New("cluster1", "cluster2"),
+		},
+		{
+			name: "Empty GracefulEvictionTasks",
+			bindingSpec: workv1alpha2.ResourceBindingSpec{
+				GracefulEvictionTasks: []workv1alpha2.GracefulEvictionTask{},
+			},
+			wantClusters: sets.New[string](),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotClusters := ObtainClustersWithPurgeModeDirectly(tt.bindingSpec)
+			if !gotClusters.Equal(tt.wantClusters) {
+				t.Errorf("ObtainClustersWithPurgeModeDirectly() = %v, want %v", gotClusters.UnsortedList(), tt.wantClusters.UnsortedList())
+			}
+		})
+	}
+}
+
+func TestGetWeightSum(t *testing.T) {
+	tests := []struct {
+		name     string
+		list     ClusterWeightInfoList
+		expected int64
+	}{
+		{
+			name:     "empty list",
+			list:     ClusterWeightInfoList{},
+			expected: 0,
+		},
+		{
+			name: "single cluster",
+			list: ClusterWeightInfoList{
+				{ClusterName: "cluster1", Weight: 5},
+			},
+			expected: 5,
+		},
+		{
+			name: "multiple clusters",
+			list: ClusterWeightInfoList{
+				{ClusterName: "cluster1", Weight: 1},
+				{ClusterName: "cluster2", Weight: 2},
+				{ClusterName: "cluster3", Weight: 3},
+			},
+			expected: 6,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.list.GetWeightSum()
+			if got != tt.expected {
+				t.Errorf("GetWeightSum() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestNewDispenser(t *testing.T) {
+	tests := []struct {
+		name        string
+		numReplicas int32
+		init        []workv1alpha2.TargetCluster
+		uuid        types.UID
+	}{
+		{
+			name:        "nil init",
+			numReplicas: 5,
+			init:        nil,
+			uuid:        "",
+		},
+		{
+			name:        "with initial assignment",
+			numReplicas: 10,
+			init: []workv1alpha2.TargetCluster{
+				{Name: "cluster1", Replicas: 3},
+				{Name: "cluster2", Replicas: 7},
+			},
+			uuid: "4858ca61-3ff8-4095-8267-f3d059d8074c",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := NewDispenser(tt.numReplicas, tt.init, tt.uuid)
+			if d == nil {
+				t.Fatal("NewDispenser() returned nil")
+			}
+			if d.NumReplicas != tt.numReplicas {
+				t.Errorf("NumReplicas = %v, want %v", d.NumReplicas, tt.numReplicas)
+			}
+			if len(d.Result) != len(tt.init) {
+				t.Errorf("Result length = %v, want %v", len(d.Result), len(tt.init))
+			}
+			if len(tt.init) > 0 {
+				if !reflect.DeepEqual(d.Result, tt.init) {
+					t.Errorf("Result = %v, want %v", d.Result, tt.init)
+				}
+				d.Result[0].Replicas = 999
+				if tt.init[0].Replicas == 999 {
+					t.Error("NewDispenser() should make a copy of init, not reference it")
+				}
+			}
+		})
+	}
+}
+
+func TestDone(t *testing.T) {
+	tests := []struct {
+		name        string
+		numReplicas int32
+		result      []workv1alpha2.TargetCluster
+		expected    bool
+	}{
+		{
+			name:        "done: zero replicas with non-empty result",
+			numReplicas: 0,
+			result:      []workv1alpha2.TargetCluster{{Name: "cluster1", Replicas: 3}},
+			expected:    true,
+		},
+		{
+			name:        "not done: non-zero replicas",
+			numReplicas: 5,
+			result:      []workv1alpha2.TargetCluster{{Name: "cluster1", Replicas: 3}},
+			expected:    false,
+		},
+		{
+			name:        "not done: zero replicas but empty result",
+			numReplicas: 0,
+			result:      []workv1alpha2.TargetCluster{},
+			expected:    false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := &Dispenser{
+				NumReplicas: tt.numReplicas,
+				Result:      tt.result,
+			}
+			if got := d.Done(); got != tt.expected {
+				t.Errorf("Done() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGetStaticWeightInfoListByTargetClusters(t *testing.T) {
+	tests := []struct {
+		name      string
+		tcs       []workv1alpha2.TargetCluster
+		scheduled []workv1alpha2.TargetCluster
+		expected  ClusterWeightInfoList
+	}{
+		{
+			name:      "empty target clusters",
+			tcs:       []workv1alpha2.TargetCluster{},
+			scheduled: []workv1alpha2.TargetCluster{},
+			expected:  ClusterWeightInfoList{},
+		},
+		{
+			name: "no scheduled clusters",
+			tcs: []workv1alpha2.TargetCluster{
+				{Name: "cluster1", Replicas: 2},
+				{Name: "cluster2", Replicas: 3},
+			},
+			scheduled: []workv1alpha2.TargetCluster{},
+			expected: ClusterWeightInfoList{
+				{ClusterName: "cluster1", Weight: 2, LastReplicas: 0},
+				{ClusterName: "cluster2", Weight: 3, LastReplicas: 0},
+			},
+		},
+		{
+			name: "with matching scheduled clusters",
+			tcs: []workv1alpha2.TargetCluster{
+				{Name: "cluster1", Replicas: 2},
+				{Name: "cluster2", Replicas: 3},
+			},
+			scheduled: []workv1alpha2.TargetCluster{
+				{Name: "cluster1", Replicas: 5},
+			},
+			expected: ClusterWeightInfoList{
+				{ClusterName: "cluster1", Weight: 2, LastReplicas: 5},
+				{ClusterName: "cluster2", Weight: 3, LastReplicas: 0},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := GetStaticWeightInfoListByTargetClusters(tt.tcs, tt.scheduled)
+			if len(got) != len(tt.expected) {
+				t.Errorf("length = %v, want %v", len(got), len(tt.expected))
+				return
+			}
+			for i := range got {
+				if got[i] != tt.expected[i] {
+					t.Errorf("index %d: got %+v, want %+v", i, got[i], tt.expected[i])
+				}
+			}
+		})
+	}
+}
+
+func TestIsBindingScheduled(t *testing.T) {
+	tests := []struct {
+		name     string
+		status   *workv1alpha2.ResourceBindingStatus
+		expected bool
+	}{
+		{
+			name: "scheduled true",
+			status: &workv1alpha2.ResourceBindingStatus{
+				Conditions: []metav1.Condition{
+					{
+						Type:   workv1alpha2.Scheduled,
+						Status: metav1.ConditionTrue,
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "scheduled false",
+			status: &workv1alpha2.ResourceBindingStatus{
+				Conditions: []metav1.Condition{
+					{
+						Type:   workv1alpha2.Scheduled,
+						Status: metav1.ConditionFalse,
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name:     "no conditions",
+			status:   &workv1alpha2.ResourceBindingStatus{},
+			expected: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := IsBindingScheduled(tt.status)
+			if got != tt.expected {
+				t.Errorf("IsBindingScheduled() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestConstructObjectReference(t *testing.T) {
+	tests := []struct {
+		name     string
+		rs       policyv1alpha1.ResourceSelector
+		expected workv1alpha2.ObjectReference
+	}{
+		{
+			name: "full resource selector",
+			rs: policyv1alpha1.ResourceSelector{
+				APIVersion: "apps/v1",
+				Kind:       "Deployment",
+				Namespace:  "default",
+				Name:       "my-app",
+			},
+			expected: workv1alpha2.ObjectReference{
+				APIVersion: "apps/v1",
+				Kind:       "Deployment",
+				Namespace:  "default",
+				Name:       "my-app",
+			},
+		},
+		{
+			name: "cluster scoped resource",
+			rs: policyv1alpha1.ResourceSelector{
+				APIVersion: "v1",
+				Kind:       "Node",
+				Name:       "node1",
+			},
+			expected: workv1alpha2.ObjectReference{
+				APIVersion: "v1",
+				Kind:       "Node",
+				Name:       "node1",
+			},
+		},
+		{
+			name:     "empty resource selector",
+			rs:       policyv1alpha1.ResourceSelector{},
+			expected: workv1alpha2.ObjectReference{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ConstructObjectReference(tt.rs)
+			if got != tt.expected {
+				t.Errorf("ConstructObjectReference() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGenerateNodeClaimByPodSpec(t *testing.T) {
+	tests := []struct {
+		name     string
+		podSpec  *corev1.PodSpec
+		expected *workv1alpha2.NodeClaim
+	}{
+		{
+			name:     "empty pod spec returns nil",
+			podSpec:  &corev1.PodSpec{},
+			expected: nil,
+		},
+		{
+			name: "with node selector",
+			podSpec: &corev1.PodSpec{
+				NodeSelector: map[string]string{"disktype": "ssd"},
+			},
+			expected: &workv1alpha2.NodeClaim{
+				NodeSelector: map[string]string{"disktype": "ssd"},
+			},
+		},
+		{
+			name: "with tolerations",
+			podSpec: &corev1.PodSpec{
+				Tolerations: []corev1.Toleration{
+					{Key: "key1", Operator: corev1.TolerationOpExists},
+				},
+			},
+			expected: &workv1alpha2.NodeClaim{
+				Tolerations: []corev1.Toleration{
+					{Key: "key1", Operator: corev1.TolerationOpExists},
+				},
+			},
+		},
+		{
+			name: "with node affinity",
+			podSpec: &corev1.PodSpec{
+				Affinity: &corev1.Affinity{
+					NodeAffinity: &corev1.NodeAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+							NodeSelectorTerms: []corev1.NodeSelectorTerm{
+								{MatchFields: []corev1.NodeSelectorRequirement{
+									{Key: "foo", Operator: corev1.NodeSelectorOpExists},
+								}},
+							},
+						},
+					},
+				},
+			},
+			expected: &workv1alpha2.NodeClaim{
+				HardNodeAffinity: &corev1.NodeSelector{
+					NodeSelectorTerms: []corev1.NodeSelectorTerm{
+						{MatchFields: []corev1.NodeSelectorRequirement{
+							{Key: "foo", Operator: corev1.NodeSelectorOpExists},
+						}},
+					},
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := GenerateNodeClaimByPodSpec(tt.podSpec)
+			if !reflect.DeepEqual(got, tt.expected) {
+				t.Errorf("GenerateNodeClaimByPodSpec() = %+v, want %+v", got, tt.expected)
 			}
 		})
 	}

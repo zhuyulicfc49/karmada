@@ -61,7 +61,7 @@ spec:
             - --health-probe-bind-address=$(POD_IP):8000
             - --secure-port=8443
             - --cert-dir=/var/serving-cert
-            - --v=4
+            - --v=2
           ports:
             - containerPort: 8443
             - containerPort: 8080

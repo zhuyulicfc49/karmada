@@ -18,12 +18,13 @@ syntax = "proto2";
 
 package github.com.karmada_io.karmada.pkg.estimator.service;
 
-import "pkg/estimator/pb/generated.proto";
+import "pkg/estimator/pb/estimator.proto";
 
 // Package-wide variables from generator "generated".
-option go_package = "service";
+option go_package = "github.com/karmada-io/karmada/pkg/estimator/service";
 
 service Estimator {
   rpc MaxAvailableReplicas(pb.MaxAvailableReplicasRequest) returns (pb.MaxAvailableReplicasResponse) {}
+  rpc MaxAvailableComponentSets(pb.MaxAvailableComponentSetsRequest) returns (pb.MaxAvailableComponentSetsResponse) {}
   rpc GetUnschedulableReplicas(pb.UnschedulableReplicasRequest) returns (pb.UnschedulableReplicasResponse) {}
 }

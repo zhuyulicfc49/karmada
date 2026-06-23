@@ -35,7 +35,9 @@ import (
 func ParsingJobStatus(obj *batchv1.Job, status []workv1alpha2.AggregatedStatusItem) (*batchv1.JobStatus, error) {
 	var jobFailed []string
 	var startTime, completionTime *metav1.Time
-	successfulJobs, completionJobs := 0, 0
+	successfulJobs, startJobs, completionJobs := 0, 0, 0
+	// Track how many member clusters already reported SuccessCriteriaMet=true
+	successCriteriaMetClusters := 0
 	newStatus := &batchv1.JobStatus{}
 	for _, item := range status {
 		if item.Status == nil {
@@ -60,7 +62,18 @@ func ParsingJobStatus(obj *batchv1.Job, status []workv1alpha2.AggregatedStatusIt
 			jobFailed = append(jobFailed, item.ClusterName)
 		}
 
+		// Count clusters that already set SuccessCriteriaMet=true
+		for _, c := range temp.Conditions {
+			if c.Type == batchv1.JobSuccessCriteriaMet && c.Status == corev1.ConditionTrue {
+				successCriteriaMetClusters++
+				break
+			}
+		}
+
 		// StartTime
+		if temp.StartTime != nil {
+			startJobs++
+		}
 		if startTime == nil || temp.StartTime.Before(startTime) {
 			startTime = temp.StartTime
 		}
@@ -95,9 +108,22 @@ func ParsingJobStatus(obj *batchv1.Job, status []workv1alpha2.AggregatedStatusIt
 			Reason:             "Completed",
 			Message:            "Job completed",
 		})
+
+		// Set JobSuccessCriteriaMet condition when all member clusters have met success criteria.
+		if len(status) > 0 && successCriteriaMetClusters == len(status) {
+			newStatus.Conditions = append(newStatus.Conditions, batchv1.JobCondition{
+				Type:               batchv1.JobSuccessCriteriaMet,
+				Status:             corev1.ConditionTrue,
+				LastProbeTime:      metav1.Now(),
+				LastTransitionTime: metav1.Now(),
+				Reason:             "CompletionsReached",
+				Message:            "All member clusters have met success criteria",
+			})
+		}
 	}
 
-	if startTime != nil {
+	newStatus.StartTime = obj.Status.StartTime
+	if obj.Status.StartTime == nil && startJobs == len(status) && startJobs > 0 {
 		newStatus.StartTime = startTime.DeepCopy()
 	}
 	if completionTime != nil && completionJobs == len(status) {

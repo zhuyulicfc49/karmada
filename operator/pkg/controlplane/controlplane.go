@@ -20,6 +20,7 @@ import (
 	"fmt"
 
 	appsv1 "k8s.io/api/apps/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kuberuntime "k8s.io/apimachinery/pkg/runtime"
 	clientset "k8s.io/client-go/kubernetes"
 	clientsetscheme "k8s.io/client-go/kubernetes/scheme"
@@ -27,6 +28,8 @@ import (
 
 	operatorv1alpha1 "github.com/karmada-io/karmada/operator/pkg/apis/operator/v1alpha1"
 	"github.com/karmada-io/karmada/operator/pkg/constants"
+	"github.com/karmada-io/karmada/operator/pkg/controlplane/apiserver"
+	"github.com/karmada-io/karmada/operator/pkg/controlplane/pdb"
 	"github.com/karmada-io/karmada/operator/pkg/util"
 	"github.com/karmada-io/karmada/operator/pkg/util/apiclient"
 	"github.com/karmada-io/karmada/operator/pkg/util/patcher"
@@ -45,9 +48,46 @@ func EnsureControlPlaneComponent(component, name, namespace string, featureGates
 		return nil
 	}
 
-	if err := apiclient.CreateOrUpdateDeployment(client, deployment); err != nil {
+	if deployment, err = apiclient.CreateOrUpdateDeployment(client, deployment); err != nil {
 		return fmt.Errorf("failed to create deployment resource for component %s, err: %w", component, err)
 	}
+
+	// Ensure PDB for the component if configured
+	// Map PascalCase component constants to naming functions for PDB
+	var (
+		commonSettings *operatorv1alpha1.CommonSettings
+		pdbName        string
+	)
+	switch component {
+	case constants.KarmadaControllerManagerComponent:
+		if cfg.KarmadaControllerManager != nil {
+			commonSettings = &cfg.KarmadaControllerManager.CommonSettings
+			pdbName = util.KarmadaControllerManagerName(name)
+		}
+	case constants.KubeControllerManagerComponent:
+		if cfg.KubeControllerManager != nil {
+			commonSettings = &cfg.KubeControllerManager.CommonSettings
+			pdbName = util.KubeControllerManagerName(name)
+		}
+	case constants.KarmadaSchedulerComponent:
+		if cfg.KarmadaScheduler != nil {
+			commonSettings = &cfg.KarmadaScheduler.CommonSettings
+			pdbName = util.KarmadaSchedulerName(name)
+		}
+	case constants.KarmadaDeschedulerComponent:
+		if cfg.KarmadaDescheduler != nil {
+			commonSettings = &cfg.KarmadaDescheduler.CommonSettings
+			pdbName = util.KarmadaDeschedulerName(name)
+		}
+	}
+
+	if commonSettings != nil {
+		ownerRef := *metav1.NewControllerRef(deployment, apiserver.DeploymentGVK)
+		if err := pdb.EnsurePodDisruptionBudget(client, pdbName, namespace, commonSettings.PodDisruptionBudgetConfig, deployment.Spec.Template.Labels, []metav1.OwnerReference{ownerRef}); err != nil {
+			return fmt.Errorf("failed to ensure PDB for component %s (instance: %s), err: %w", component, pdbName, err)
+		}
+	}
+
 	return nil
 }
 
@@ -108,7 +148,8 @@ func getKubeControllerManagerManifest(name, namespace string, cfg *operatorv1alp
 
 	patcher.NewPatcher().WithAnnotations(cfg.Annotations).
 		WithPriorityClassName(cfg.CommonSettings.PriorityClassName).
-		WithLabels(cfg.Labels).WithExtraArgs(cfg.ExtraArgs).WithResources(cfg.Resources).ForDeployment(kcm)
+		WithLabels(cfg.Labels).WithExtraArgs(cfg.ExtraArgs).WithResources(cfg.Resources).
+		WithTolerations(cfg.CommonSettings.Tolerations).WithAffinity(cfg.CommonSettings.Affinity).ForDeployment(kcm)
 	return kcm, nil
 }
 
@@ -138,7 +179,8 @@ func getKarmadaControllerManagerManifest(name, namespace string, featureGates ma
 
 	patcher.NewPatcher().WithAnnotations(cfg.Annotations).WithLabels(cfg.Labels).
 		WithPriorityClassName(cfg.CommonSettings.PriorityClassName).
-		WithExtraArgs(cfg.ExtraArgs).WithFeatureGates(featureGates).WithResources(cfg.Resources).ForDeployment(kcm)
+		WithExtraArgs(cfg.ExtraArgs).WithFeatureGates(featureGates).WithResources(cfg.Resources).
+		WithTolerations(cfg.CommonSettings.Tolerations).WithAffinity(cfg.CommonSettings.Affinity).ForDeployment(kcm)
 	return kcm, nil
 }
 
@@ -169,7 +211,8 @@ func getKarmadaSchedulerManifest(name, namespace string, featureGates map[string
 
 	patcher.NewPatcher().WithAnnotations(cfg.Annotations).WithLabels(cfg.Labels).
 		WithPriorityClassName(cfg.CommonSettings.PriorityClassName).
-		WithExtraArgs(cfg.ExtraArgs).WithFeatureGates(featureGates).WithResources(cfg.Resources).ForDeployment(scheduler)
+		WithExtraArgs(cfg.ExtraArgs).WithFeatureGates(featureGates).WithResources(cfg.Resources).
+		WithTolerations(cfg.CommonSettings.Tolerations).WithAffinity(cfg.CommonSettings.Affinity).ForDeployment(scheduler)
 	return scheduler, nil
 }
 
@@ -200,7 +243,8 @@ func getKarmadaDeschedulerManifest(name, namespace string, featureGates map[stri
 
 	patcher.NewPatcher().WithAnnotations(cfg.Annotations).WithLabels(cfg.Labels).
 		WithPriorityClassName(cfg.CommonSettings.PriorityClassName).
-		WithExtraArgs(cfg.ExtraArgs).WithFeatureGates(featureGates).WithResources(cfg.Resources).ForDeployment(descheduler)
+		WithExtraArgs(cfg.ExtraArgs).WithFeatureGates(featureGates).WithResources(cfg.Resources).
+		WithTolerations(cfg.CommonSettings.Tolerations).WithAffinity(cfg.CommonSettings.Affinity).ForDeployment(descheduler)
 
 	return descheduler, nil
 }

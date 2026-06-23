@@ -24,6 +24,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
+	"sigs.k8s.io/controller-runtime/pkg/controller/priorityqueue"
 
 	"github.com/karmada-io/karmada/pkg/sharedcli/ratelimiterflag"
 )
@@ -33,17 +34,46 @@ import (
 // after that the item will be discarded from the queue.
 type AsyncWorker interface {
 	// Add adds the 'item' to queue immediately(without any delay).
-	Add(item interface{})
+	Add(item any)
 
 	// AddAfter adds an item to the workqueue after the indicated duration has passed
-	AddAfter(item interface{}, duration time.Duration)
+	AddAfter(item any, duration time.Duration)
 
 	// Enqueue generates the key of 'obj' according to a 'KeyFunc' then adds the key as an item to queue by 'Add'.
-	Enqueue(obj interface{})
+	Enqueue(obj any)
 
 	// Run starts a certain number of concurrent workers to reconcile the items and will never stop until context
 	// is canceled.
 	Run(ctx context.Context, workerNumber int)
+}
+
+// LowPriority is the priority value for low priority items.
+const LowPriority = -100
+
+// AsyncPriorityWorker is an extension of AsyncWorker with priority queue support.
+type AsyncPriorityWorker interface {
+	// EnqueueWithOpts generates the key of 'obj' according to a 'KeyFunc' then adds the key as an item to priority queue by 'AddWithOpts'.
+	EnqueueWithOpts(opts AddOpts, obj any)
+
+	// AddWithOpts adds items to the priority queue with options.
+	AddWithOpts(opts AddOpts, item ...any)
+
+	AsyncWorker
+}
+
+// AddOpts defines the options for adding items to priority queue.
+type AddOpts struct {
+	After       time.Duration
+	RateLimited bool
+	Priority    *int
+}
+
+func (o *AddOpts) toPriorityQueueAddOpts() priorityqueue.AddOpts {
+	return priorityqueue.AddOpts{
+		After:       o.After,
+		RateLimited: o.RateLimited,
+		Priority:    o.Priority,
+	}
 }
 
 // QueueKey is the item key that stores in queue.
@@ -52,15 +82,16 @@ type AsyncWorker interface {
 // In some cases, people would like store different resources in a same queue, the traditional full-qualified key,
 // such as '<namespace>/<name>', can't distinguish which resource the key belongs to, the key might carry more information
 // of a resource, such as GVK(Group Version Kind), in that cases people need to use self-defined key, e.g. a struct.
-type QueueKey interface{}
+type QueueKey any
 
 // KeyFunc knows how to make a key from an object. Implementations should be deterministic.
-type KeyFunc func(obj interface{}) (QueueKey, error)
+type KeyFunc func(obj any) (QueueKey, error)
 
 // ReconcileFunc knows how to consume items(key) from the queue.
 type ReconcileFunc func(key QueueKey) error
 
 type asyncWorker struct {
+	name string
 	// keyFunc is the function that make keys for API objects.
 	keyFunc KeyFunc
 	// reconcileFunc is the function that process keys from the queue.
@@ -77,20 +108,32 @@ type Options struct {
 	KeyFunc            KeyFunc
 	ReconcileFunc      ReconcileFunc
 	RateLimiterOptions ratelimiterflag.Options
+	UsePriorityQueue   bool
 }
 
 // NewAsyncWorker returns a asyncWorker which can process resource periodic.
-func NewAsyncWorker(opt Options) AsyncWorker {
+func NewAsyncWorker(opt Options) AsyncPriorityWorker {
+	var queue workqueue.TypedRateLimitingInterface[any]
+	if opt.UsePriorityQueue {
+		rateLimiterOpts := opt.RateLimiterOptions.SetDefaults()
+		queue = priorityqueue.New[any](opt.Name, func(o *priorityqueue.Opts[any]) {
+			// change to controller-runtime priorityqueue default rateLimiter
+			o.RateLimiter = workqueue.NewTypedItemExponentialFailureRateLimiter[any](rateLimiterOpts.RateLimiterBaseDelay, rateLimiterOpts.RateLimiterMaxDelay)
+		})
+	} else {
+		queue = workqueue.NewTypedRateLimitingQueueWithConfig(ratelimiterflag.DefaultControllerRateLimiter[any](opt.RateLimiterOptions), workqueue.TypedRateLimitingQueueConfig[any]{
+			Name: opt.Name,
+		})
+	}
 	return &asyncWorker{
+		name:          opt.Name,
 		keyFunc:       opt.KeyFunc,
 		reconcileFunc: opt.ReconcileFunc,
-		queue: workqueue.NewTypedRateLimitingQueueWithConfig(ratelimiterflag.DefaultControllerRateLimiter[any](opt.RateLimiterOptions), workqueue.TypedRateLimitingQueueConfig[any]{
-			Name: opt.Name,
-		}),
+		queue:         queue,
 	}
 }
 
-func (w *asyncWorker) Enqueue(obj interface{}) {
+func (w *asyncWorker) Enqueue(obj any) {
 	key, err := w.keyFunc(obj)
 	if err != nil {
 		klog.Errorf("Failed to generate key for obj: %+v, err: %v", obj, err)
@@ -104,7 +147,21 @@ func (w *asyncWorker) Enqueue(obj interface{}) {
 	w.Add(key)
 }
 
-func (w *asyncWorker) Add(item interface{}) {
+func (w *asyncWorker) EnqueueWithOpts(opts AddOpts, obj any) {
+	key, err := w.keyFunc(obj)
+	if err != nil {
+		klog.Errorf("Failed to generate key for obj: %+v, err: %v", obj, err)
+		return
+	}
+
+	if key == nil {
+		return
+	}
+
+	w.AddWithOpts(opts, key)
+}
+
+func (w *asyncWorker) Add(item any) {
 	if item == nil {
 		klog.Warningf("Ignore nil item from queue")
 		return
@@ -113,13 +170,40 @@ func (w *asyncWorker) Add(item interface{}) {
 	w.queue.Add(item)
 }
 
-func (w *asyncWorker) AddAfter(item interface{}, duration time.Duration) {
+func (w *asyncWorker) AddAfter(item any, duration time.Duration) {
 	if item == nil {
 		klog.Warningf("Ignore nil item from queue")
 		return
 	}
 
 	w.queue.AddAfter(item, duration)
+}
+
+func (w *asyncWorker) AddWithOpts(opts AddOpts, item ...any) {
+	if item == nil {
+		klog.Warningf("Ignore nil item from queue")
+		return
+	}
+
+	pq, ok := w.queue.(interface {
+		AddWithOpts(o priorityqueue.AddOpts, Items ...any)
+	})
+	if !ok {
+		klog.Warningf("queue is not priority queue, fallback to normal queue, queueName: %s", w.name)
+		for _, it := range item {
+			switch {
+			case opts.RateLimited:
+				w.queue.AddRateLimited(it)
+			case opts.After > 0:
+				w.queue.AddAfter(it, opts.After)
+			default:
+				w.queue.Add(it)
+			}
+		}
+		return
+	}
+
+	pq.AddWithOpts(opts.toPriorityQueueAddOpts(), item...)
 }
 
 func (w *asyncWorker) worker() {
@@ -139,7 +223,7 @@ func (w *asyncWorker) worker() {
 }
 
 func (w *asyncWorker) Run(ctx context.Context, workerNumber int) {
-	for i := 0; i < workerNumber; i++ {
+	for range workerNumber {
 		go wait.Until(w.worker, 0, ctx.Done())
 	}
 	// Ensure all goroutines are cleaned up when the stop channel closes
@@ -150,11 +234,19 @@ func (w *asyncWorker) Run(ctx context.Context, workerNumber int) {
 }
 
 // MetaNamespaceKeyFunc generates a namespaced key for object.
-func MetaNamespaceKeyFunc(obj interface{}) (QueueKey, error) {
+func MetaNamespaceKeyFunc(obj any) (QueueKey, error) {
 	var key string
 	var err error
 	if key, err = cache.MetaNamespaceKeyFunc(obj); err != nil {
 		return nil, err
 	}
 	return key, nil
+}
+
+// ItemPriorityIfInInitialList returns the item's priority if it belongs to the initial list; otherwise, it returns nil.
+func ItemPriorityIfInInitialList(isInInitialList bool) *int {
+	if !isInInitialList {
+		return nil
+	}
+	return new(LowPriority)
 }

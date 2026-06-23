@@ -103,7 +103,7 @@ func (c *EndpointsliceDispatchController) Reconcile(ctx context.Context, req con
 	defer func() {
 		if err != nil {
 			_ = c.updateEndpointSliceDispatched(ctx, mcs, metav1.ConditionFalse, "EndpointSliceDispatchedFailed", err.Error())
-			c.EventRecorder.Eventf(mcs, corev1.EventTypeWarning, events.EventReasonDispatchEndpointSliceFailed, err.Error())
+			c.EventRecorder.Eventf(mcs, corev1.EventTypeWarning, events.EventReasonDispatchEndpointSliceFailed, "%s", err.Error())
 			return
 		}
 		_ = c.updateEndpointSliceDispatched(ctx, mcs, metav1.ConditionTrue, "EndpointSliceDispatchedSucceed", "EndpointSlice are dispatched successfully")
@@ -338,7 +338,8 @@ func (c *EndpointsliceDispatchController) dispatchEndpointSlice(ctx context.Cont
 				"Consumer cluster %s is not ready, skip to propagate EndpointSlice", clusterName)
 			continue
 		}
-		if !helper.IsAPIEnabled(clusterObj.Status.APIEnablements, util.EndpointSliceGVK.GroupVersion().String(), util.EndpointSliceGVK.Kind) {
+
+		if clusterObj.APIEnablement(util.EndpointSliceGVK) == clusterv1alpha1.APIDisabled {
 			c.EventRecorder.Eventf(mcs, corev1.EventTypeWarning, events.EventReasonAPIIncompatible, "Consumer cluster %s does not support EndpointSlice", clusterName)
 			continue
 		}

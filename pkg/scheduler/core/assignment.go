@@ -21,9 +21,9 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/sets"
 
-	clusterv1alpha1 "github.com/karmada-io/karmada/pkg/apis/cluster/v1alpha1"
 	policyv1alpha1 "github.com/karmada-io/karmada/pkg/apis/policy/v1alpha1"
 	workv1alpha2 "github.com/karmada-io/karmada/pkg/apis/work/v1alpha2"
+	"github.com/karmada-io/karmada/pkg/scheduler/core/spreadconstraint"
 	"github.com/karmada-io/karmada/pkg/util"
 	"github.com/karmada-io/karmada/pkg/util/helper"
 )
@@ -67,7 +67,8 @@ const (
 
 // assignState is a wrapper of the input for assigning function.
 type assignState struct {
-	candidates []*clusterv1alpha1.Cluster
+	// candidates are the clusters selected for assignment by the selectClusters function.
+	candidates []spreadconstraint.ClusterDetailInfo
 	strategy   *policyv1alpha1.ReplicaSchedulingStrategy
 	spec       *workv1alpha2.ResourceBindingSpec
 
@@ -77,17 +78,21 @@ type assignState struct {
 	// assignmentMode represents the mode how to assign replicas
 	assignmentMode assignmentMode
 
+	// scheduledClusters is the list of clusters from `candidates` that were assigned replicas in the previous scheduling.
 	scheduledClusters []workv1alpha2.TargetCluster
-	assignedReplicas  int32
+	// assignedReplicas is the total number of replicas assigned to `candidates` in the previous scheduling. It is calculated from scheduledClusters.
+	assignedReplicas int32
+	// availableClusters is the list of available clusters for the current scheduling, where the Replicas field indicates
+	// the number of assignable replicas and is generally used as dynamic weight.
 	availableClusters []workv1alpha2.TargetCluster
+	// availableReplicas is the number of replicas that can be assigned in this round. It is calculated from availableClusters.
 	availableReplicas int32
 
 	// targetReplicas is the replicas that we need to schedule in this round
 	targetReplicas int32
 }
 
-func newAssignState(candidates []*clusterv1alpha1.Cluster, spec *workv1alpha2.ResourceBindingSpec,
-	status *workv1alpha2.ResourceBindingStatus) *assignState {
+func newAssignState(candidates []spreadconstraint.ClusterDetailInfo, spec *workv1alpha2.ResourceBindingSpec, status *workv1alpha2.ResourceBindingStatus) *assignState {
 	var strategyType string
 
 	switch spec.Placement.ReplicaSchedulingType() {
@@ -199,8 +204,8 @@ func assignByStaticWeightStrategy(state *assignState) ([]workv1alpha2.TargetClus
 	}
 	weightList := getStaticWeightInfoList(state.candidates, state.strategy.WeightPreference.StaticWeightList, state.spec.Clusters)
 
-	disp := helper.NewDispenser(state.spec.Replicas, nil)
-	disp.TakeByWeight(weightList)
+	disp := helper.NewDispenser(state.spec.Replicas, nil, state.spec.Resource.UID)
+	disp.AllocateByWeight(weightList)
 
 	return disp.Result, nil
 }
@@ -212,7 +217,7 @@ func assignByDynamicStrategy(state *assignState) ([]workv1alpha2.TargetCluster, 
 	if state.assignmentMode == Fresh {
 		result, err := dynamicFreshScale(state)
 		if err != nil {
-			return nil, fmt.Errorf("failed to do fresh scale: %v", err)
+			return nil, fmt.Errorf("failed to do fresh scale: %w", err)
 		}
 		return result, nil
 	}
@@ -222,7 +227,7 @@ func assignByDynamicStrategy(state *assignState) ([]workv1alpha2.TargetCluster, 
 		// We need to reduce the replicas in terms of the previous result.
 		result, err := dynamicScaleDown(state)
 		if err != nil {
-			return nil, fmt.Errorf("failed to scale down: %v", err)
+			return nil, fmt.Errorf("failed to scale down: %w", err)
 		}
 		return result, nil
 	} else if state.assignedReplicas < state.spec.Replicas {
@@ -230,7 +235,7 @@ func assignByDynamicStrategy(state *assignState) ([]workv1alpha2.TargetCluster, 
 		// First scheduling is considered as a special kind of scaling up.
 		result, err := dynamicScaleUp(state)
 		if err != nil {
-			return nil, fmt.Errorf("failed to scale up: %v", err)
+			return nil, fmt.Errorf("failed to scale up: %w", err)
 		}
 		return result, nil
 	}

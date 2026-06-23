@@ -20,13 +20,13 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
-	"k8s.io/utils/ptr"
 	controllerruntime "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -67,7 +67,7 @@ func (c *ClusterTaintPolicyController) Reconcile(ctx context.Context, req contro
 	}
 
 	clusterTaintPolicyList := &policyv1alpha1.ClusterTaintPolicyList{}
-	listOption := &client.ListOptions{UnsafeDisableDeepCopy: ptr.To(true)}
+	listOption := &client.ListOptions{UnsafeDisableDeepCopy: new(true)}
 	if err := c.Client.List(ctx, clusterTaintPolicyList, listOption); err != nil {
 		klog.ErrorS(err, "Failed to list ClusterTaintPolicy")
 		return controllerruntime.Result{}, err
@@ -96,7 +96,7 @@ func (c *ClusterTaintPolicyController) Reconcile(ctx context.Context, req contro
 	}
 
 	if !reflect.DeepEqual(clusterObj.Spec.Taints, clusterCopyObj.Spec.Taints) {
-		objPatch := client.MergeFrom(clusterObj)
+		objPatch := client.MergeFromWithOptions(clusterObj, client.MergeFromWithOptimisticLock{})
 		err := c.Client.Patch(ctx, clusterCopyObj, objPatch)
 		if err != nil {
 			klog.ErrorS(err, "Failed to patch Cluster", "cluster", req.Name)
@@ -132,19 +132,13 @@ func conditionMatches(conditions []metav1.Condition, matchConditions []policyv1a
 
 			switch matchCondition.Operator {
 			case policyv1alpha1.MatchConditionOpIn:
-				for _, value := range matchCondition.StatusValues {
-					if clusterCondition.Status == value {
-						match = true
-						break
-					}
+				if slices.Contains(matchCondition.StatusValues, clusterCondition.Status) {
+					match = true
 				}
 			case policyv1alpha1.MatchConditionOpNotIn:
 				match = true
-				for _, value := range matchCondition.StatusValues {
-					if clusterCondition.Status == value {
-						match = false
-						break
-					}
+				if slices.Contains(matchCondition.StatusValues, clusterCondition.Status) {
+					match = false
 				}
 			default:
 				err := fmt.Errorf("unsupported MatchCondition operator")
@@ -234,7 +228,7 @@ func (c *ClusterTaintPolicyController) SetupWithManager(mgr controllerruntime.Ma
 	clusterTaintPolicyMapFunc := handler.MapFunc(
 		func(ctx context.Context, policyObj client.Object) []reconcile.Request {
 			clusterList := &clusterv1alpha1.ClusterList{}
-			listOption := &client.ListOptions{UnsafeDisableDeepCopy: ptr.To(true)}
+			listOption := &client.ListOptions{UnsafeDisableDeepCopy: new(true)}
 			if err := c.Client.List(ctx, clusterList, listOption); err != nil {
 				klog.ErrorS(err, "Failed to list Cluster")
 				return nil

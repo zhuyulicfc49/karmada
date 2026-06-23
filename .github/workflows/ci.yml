@@ -20,9 +20,9 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: install Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
           go-version-file: go.mod
       - name: verify license
@@ -38,18 +38,11 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: install Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
           go-version-file: go.mod
-      - name: Install Protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          version: '23.4'
-          # Use the automatic token, so that this task can be run in the forked repo.
-          # https://docs.github.com/en/actions/security-guides/automatic-token-authentication
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: verify codegen
         run: hack/verify-codegen.sh
       - name: verify crdgen
@@ -58,6 +51,8 @@ jobs:
         run: hack/verify-estimator-protobuf.sh
       - name: verify swagger docs
         run: hack/verify-swagger-docs.sh
+      - name: verify command line flags
+        run: hack/verify-command-line-flags.sh
       - name: verify lifted docs
         run: hack/verify-lifted.sh
   build:
@@ -66,13 +61,13 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           # Number of commits to fetch. 0 indicates all history for all branches and tags.
           # We need to guess version via git tags.
           fetch-depth: 0
       - name: install Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
           go-version-file: go.mod
       - name: compile
@@ -85,9 +80,9 @@ jobs:
       GOTESTSUM_ENABLED: enabled
     steps:
       - name: checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: install Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
           go-version-file: go.mod
       - name: make test
@@ -96,7 +91,7 @@ jobs:
         # Prevent running from the forked repository that doesn't need to upload coverage.
         # In addition, running on the forked repository would fail as missing the necessary secret.
         if: ${{ github.repository == 'karmada-io/karmada' }}
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           # Even though token upload token is not required for public repos,
           # but adding a token might increase successful uploads as per:
@@ -116,11 +111,11 @@ jobs:
         # Here support the latest three minor releases of Kubernetes, this can be considered to be roughly
         # the same as the End of Life of the Kubernetes release: https://kubernetes.io/releases/
         # Please remember to update the CI Schedule Workflow when we add a new version.
-        k8s: [ v1.31.0, v1.32.0, v1.33.0 ]
+        k8s: [ v1.33.0, v1.34.0, v1.35.0 ]
     steps:
       # Free up disk space on Ubuntu
       - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@main
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
         with:
           # this might remove tools that are actually needed, if set to "true" but frees about 6 GB
           tool-cache: false
@@ -132,18 +127,19 @@ jobs:
           docker-images: false
           swap-storage: false
       - name: checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           # Number of commits to fetch. 0 indicates all history for all branches and tags.
           # We need to guess version via git tags.
           fetch-depth: 0
       - name: install Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
           go-version-file: go.mod
       - name: setup e2e test environment
         run: |
           export CLUSTER_VERSION=kindest/node:${{ matrix.k8s }}
+          export KUBE_CACHE_MUTATION_DETECTOR=true
           hack/local-up-karmada.sh
       - name: run e2e
         run: |
@@ -151,69 +147,13 @@ jobs:
           hack/run-e2e.sh
       - name: upload logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: karmada_e2e_log_${{ matrix.k8s }}
           path: ${{ github.workspace }}/karmada-e2e-logs/${{ matrix.k8s }}/
       - name: upload kind logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: karmada_kind_log_${{ matrix.k8s }}
-          path: /tmp/karmada/
-
-  e2e-operator:
-    name: operator e2e test
-    needs: build
-    runs-on: ubuntu-22.04
-    strategy:
-      fail-fast: false
-      matrix:
-        # Here support the latest three minor releases of Kubernetes, this can be considered to be roughly
-        # the same as the End of Life of the Kubernetes release: https://kubernetes.io/releases/
-        # Please remember to update the CI Schedule Workflow when we add a new version.
-        k8s: [ v1.31.0, v1.32.0, v1.33.0 ]
-    steps:
-      # Free up disk space on Ubuntu
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@main
-        with:
-          # this might remove tools that are actually needed, if set to "true" but frees about 6 GB
-          tool-cache: false
-          # all of these default to true, but feel free to set to "false" if necessary for your workflow
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: false
-          docker-images: false
-          swap-storage: false
-      - name: checkout code
-        uses: actions/checkout@v4
-        with:
-          # Number of commits to fetch. 0 indicates all history for all branches and tags.
-          # We need to guess version via git tags.
-          fetch-depth: 0
-      - name: install Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - name: setup operator e2e test environment
-        run: |
-          export CLUSTER_VERSION=kindest/node:${{ matrix.k8s }}
-          hack/operator-e2e-environment.sh
-      - name: run e2e
-        run: |
-          export ARTIFACTS_PATH=${{ github.workspace }}/karmada-operator-e2e-logs/${{ matrix.k8s }}/
-          hack/run-e2e-operator.sh
-      - name: upload logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: karmada_operator_e2e_log_${{ matrix.k8s }}
-          path: ${{ github.workspace }}/karmada-operator-e2e-logs/${{ matrix.k8s }}/
-      - name: upload kind logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: karmada_operator_kind_log_${{ matrix.k8s }}
           path: /tmp/karmada/

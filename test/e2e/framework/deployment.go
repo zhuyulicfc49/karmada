@@ -19,6 +19,7 @@ package framework
 import (
 	"context"
 	"fmt"
+	"maps"
 	"reflect"
 
 	"github.com/onsi/ginkgo/v2"
@@ -91,6 +92,7 @@ func WaitDeploymentPresentOnClusterFitWith(cluster, namespace, name string, fit 
 	gomega.Eventually(func() bool {
 		dep, err := clusterClient.AppsV1().Deployments(namespace).Get(context.TODO(), name, metav1.GetOptions{})
 		if err != nil {
+			klog.Errorf("Failed to get Deployment(%s/%s) on cluster(%s), err: %v", namespace, name, cluster, err)
 			return false
 		}
 		return fit(dep)
@@ -102,6 +104,7 @@ func WaitDeploymentFitWith(client kubernetes.Interface, namespace, name string, 
 	gomega.Eventually(func() bool {
 		dep, err := client.AppsV1().Deployments(namespace).Get(context.TODO(), name, metav1.GetOptions{})
 		if err != nil {
+			klog.Errorf("Failed to get Deployment(%s/%s), err: %v", namespace, name, err)
 			return false
 		}
 		return fit(dep)
@@ -123,6 +126,7 @@ func WaitDeploymentStatus(client kubernetes.Interface, deployment *appsv1.Deploy
 		gomega.Eventually(func() bool {
 			deploy, err := client.AppsV1().Deployments(deployment.Namespace).Get(context.TODO(), deployment.Name, metav1.GetOptions{})
 			if err != nil {
+				klog.Errorf("Failed to get Deployment(%s/%s), err: %v", deployment.Namespace, deployment.Name, err)
 				return false
 			}
 			return CheckDeploymentReadyStatus(deploy, replicas)
@@ -200,9 +204,7 @@ func AppendDeploymentAnnotations(client kubernetes.Interface, deployment *appsv1
 			if deploy.Annotations == nil {
 				deploy.Annotations = make(map[string]string, 0)
 			}
-			for k, v := range annotations {
-				deploy.Annotations[k] = v
-			}
+			maps.Copy(deploy.Annotations, annotations)
 			_, err = client.AppsV1().Deployments(deploy.Namespace).Update(context.TODO(), deploy, metav1.UpdateOptions{})
 			return err
 		}, PollTimeout, PollInterval).ShouldNot(gomega.HaveOccurred())
@@ -271,6 +273,7 @@ func WaitDeploymentGetByClientFitWith(client kubernetes.Interface, namespace, na
 		gomega.Eventually(func() bool {
 			dep, err := client.AppsV1().Deployments(namespace).Get(context.TODO(), name, metav1.GetOptions{})
 			if err != nil {
+				klog.Errorf("Failed to get Deployment(%s/%s), err: %v", namespace, name, err)
 				return false
 			}
 			return fit(dep)
@@ -299,4 +302,21 @@ func WaitDeploymentReplicasFitWith(clusters []string, namespace, name string, ex
 			return totalReplicas == expectReplicas
 		}, PollTimeout, PollInterval).Should(gomega.Equal(true))
 	})
+}
+
+// WaitDeploymentDisappear waits for a deployment to be removed from a namespace until timeout.
+func WaitDeploymentDisappear(client kubernetes.Interface, namespace, name string) {
+	klog.Infof("Waiting for deployment(%s/%s) disappears", namespace, name)
+	gomega.Eventually(func() bool {
+		_, err := client.AppsV1().Deployments(namespace).Get(context.TODO(), name, metav1.GetOptions{})
+		if err == nil {
+			return false
+		}
+		if apierrors.IsNotFound(err) {
+			return true
+		}
+
+		klog.Errorf("Failed to get deployment(%s/%s), err: %v", namespace, name, err)
+		return false
+	}, PollTimeout, PollInterval).Should(gomega.Equal(true))
 }

@@ -20,7 +20,10 @@ import (
 	"time"
 
 	discoveryv1 "k8s.io/api/discovery/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
+	configv1alpha1 "github.com/karmada-io/karmada/pkg/apis/config/v1alpha1"
 	workv1alpha2 "github.com/karmada-io/karmada/pkg/apis/work/v1alpha2"
 )
 
@@ -54,9 +57,6 @@ const (
 	// managed by karmada controllers.
 	KarmadaSystemLabel = "karmada.io/system"
 
-	// EndpointSliceDispatchControllerLabelValue indicates the endpointSlice are controlled by Karmada
-	EndpointSliceDispatchControllerLabelValue = "endpointslice-dispatch-controller.karmada.io"
-
 	// RetainReplicasLabel is a reserved label to indicate whether the replicas should be retained. e.g:
 	// resourcetemplate.karmada.io/retain-replicas: true   // with value `true` indicates retain
 	// resourcetemplate.karmada.io/retain-replicas: false  // with value `false` and others, indicates not retain
@@ -69,6 +69,7 @@ const (
 	EndpointSliceWorkManagedByLabel = "endpointslice.karmada.io/managed-by"
 )
 
+// Define label values used by Karmada system.
 const (
 	// ManagedByKarmadaLabelValue indicates that these are workloads in member cluster synchronized by karmada controllers.
 	ManagedByKarmadaLabelValue = "true"
@@ -78,6 +79,12 @@ const (
 
 	// RetainReplicasValue is an optional value of RetainReplicasLabel, indicating retain
 	RetainReplicasValue = "true"
+
+	// EndpointSliceDispatchControllerLabelValue indicates the endpointSlice is controlled by Karmada endpointslice-dispatch-controller
+	EndpointSliceDispatchControllerLabelValue = "endpointslice-dispatch-controller.karmada.io"
+
+	// EndpointSliceControllerLabelValue indicates the endpointSlice is controlled by Karmada endpointslice-controller
+	EndpointSliceControllerLabelValue = "endpointslice-controller.karmada.io"
 )
 
 // Define annotations used by karmada system.
@@ -99,6 +106,10 @@ const (
 
 	// EndpointSliceProvisionClusterAnnotation is added to work of the dispatch EndpointSlice in consumption clusters' namespace.
 	EndpointSliceProvisionClusterAnnotation = "endpointslice.karmada.io/provision-cluster"
+
+	// DependenciesAnnotationKey is added to the independent binding,
+	// it describes the names of dependencies (json serialized).
+	DependenciesAnnotationKey = "resourcebinding.karmada.io/dependencies"
 )
 
 // Define finalizers used by karmada system.
@@ -216,6 +227,11 @@ const (
 	CompletionsField = "completions"
 )
 
+const (
+	// QuotaExceededReason is a unique reason to describe QuotaExceeded events
+	QuotaExceededReason metav1.StatusReason = "QuotaExceeded"
+)
+
 // ContextKey is the key of context.
 type ContextKey string
 
@@ -232,6 +248,15 @@ const (
 var (
 	// EndpointSliceGVK is the GroupVersionKind of K8s native EndpointSlice.
 	EndpointSliceGVK = discoveryv1.SchemeGroupVersion.WithKind("EndpointSlice")
+)
+
+// Define resource group version resource.
+var (
+	// ResourceInterpreterCustomizationsGVR is the GroupVersionResource of ResourceInterpreterCustomizations.
+	ResourceInterpreterCustomizationsGVR = schema.GroupVersion{Group: configv1alpha1.GroupVersion.Group, Version: configv1alpha1.GroupVersion.Version}.WithResource("resourceinterpretercustomizations")
+
+	// ResourceInterpreterWebhookConfigurationsGVR is the GroupVersionResource of ResourceInterpreterWebhookConfigurations.
+	ResourceInterpreterWebhookConfigurationsGVR = schema.GroupVersion{Group: configv1alpha1.GroupVersion.Group, Version: configv1alpha1.GroupVersion.Version}.WithResource("resourceinterpreterwebhookconfigurations")
 )
 
 const (

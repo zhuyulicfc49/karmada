@@ -65,6 +65,7 @@ func WaitConfigMapPresentOnClusterFitWith(cluster, namespace, name string, fit f
 	gomega.Eventually(func() bool {
 		configmap, err := clusterClient.CoreV1().ConfigMaps(namespace).Get(context.TODO(), name, metav1.GetOptions{})
 		if err != nil {
+			klog.Errorf("Failed to get ConfigMap(%s/%s) on cluster(%s), err: %v", namespace, name, cluster, err)
 			return false
 		}
 		return fit(configmap)
@@ -72,7 +73,7 @@ func WaitConfigMapPresentOnClusterFitWith(cluster, namespace, name string, fit f
 }
 
 // UpdateConfigMapWithPatch update configmap with patch bytes.
-func UpdateConfigMapWithPatch(client kubernetes.Interface, namespace, name string, patch []map[string]interface{}, patchType types.PatchType) {
+func UpdateConfigMapWithPatch(client kubernetes.Interface, namespace, name string, patch []map[string]any, patchType types.PatchType) {
 	ginkgo.By(fmt.Sprintf("Updating configmap(%s/%s)", namespace, name), func() {
 		bytes, err := json.Marshal(patch)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())

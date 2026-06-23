@@ -39,6 +39,7 @@ import (
 	configv1alpha1 "github.com/karmada-io/karmada/pkg/apis/config/v1alpha1"
 	policyv1alpha1 "github.com/karmada-io/karmada/pkg/apis/policy/v1alpha1"
 	workv1alpha2 "github.com/karmada-io/karmada/pkg/apis/work/v1alpha2"
+	"github.com/karmada-io/karmada/pkg/features"
 	"github.com/karmada-io/karmada/pkg/util"
 	"github.com/karmada-io/karmada/pkg/util/fedinformer/keys"
 )
@@ -46,16 +47,16 @@ import (
 func BenchmarkEventFilterNoSkipNameSpaces(b *testing.B) {
 	dt := &ResourceDetector{}
 	dt.SkippedPropagatingNamespaces = nil
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		dt.EventFilter(&unstructured.Unstructured{
-			Object: map[string]interface{}{
+			Object: map[string]any{
 				"apiVersion": "apps/v1",
 				"kind":       "Deployment",
-				"metadata": map[string]interface{}{
+				"metadata": map[string]any{
 					"name":      "demo-deployment",
 					"namespace": "benchmark",
 				},
-				"spec": map[string]interface{}{
+				"spec": map[string]any{
 					"replicas": 2,
 				},
 			},
@@ -66,16 +67,16 @@ func BenchmarkEventFilterNoSkipNameSpaces(b *testing.B) {
 func BenchmarkEventFilterNoMatchSkipNameSpaces(b *testing.B) {
 	dt := &ResourceDetector{}
 	dt.SkippedPropagatingNamespaces = append(dt.SkippedPropagatingNamespaces, regexp.MustCompile("^benchmark-.*$"))
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		dt.EventFilter(&unstructured.Unstructured{
-			Object: map[string]interface{}{
+			Object: map[string]any{
 				"apiVersion": "apps/v1",
 				"kind":       "Deployment",
-				"metadata": map[string]interface{}{
+				"metadata": map[string]any{
 					"name":      "demo-deployment",
 					"namespace": "benchmark",
 				},
-				"spec": map[string]interface{}{
+				"spec": map[string]any{
 					"replicas": 2,
 				},
 			},
@@ -86,16 +87,16 @@ func BenchmarkEventFilterNoMatchSkipNameSpaces(b *testing.B) {
 func BenchmarkEventFilterNoWildcards(b *testing.B) {
 	dt := &ResourceDetector{}
 	dt.SkippedPropagatingNamespaces = append(dt.SkippedPropagatingNamespaces, regexp.MustCompile("^benchmark$"))
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		dt.EventFilter(&unstructured.Unstructured{
-			Object: map[string]interface{}{
+			Object: map[string]any{
 				"apiVersion": "apps/v1",
 				"kind":       "Deployment",
-				"metadata": map[string]interface{}{
+				"metadata": map[string]any{
 					"name":      "demo-deployment",
 					"namespace": "benchmark-1",
 				},
-				"spec": map[string]interface{}{
+				"spec": map[string]any{
 					"replicas": 2,
 				},
 			},
@@ -106,16 +107,16 @@ func BenchmarkEventFilterNoWildcards(b *testing.B) {
 func BenchmarkEventFilterPrefixMatchSkipNameSpaces(b *testing.B) {
 	dt := &ResourceDetector{}
 	dt.SkippedPropagatingNamespaces = append(dt.SkippedPropagatingNamespaces, regexp.MustCompile("^benchmark-.*$"))
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		dt.EventFilter(&unstructured.Unstructured{
-			Object: map[string]interface{}{
+			Object: map[string]any{
 				"apiVersion": "apps/v1",
 				"kind":       "Deployment",
-				"metadata": map[string]interface{}{
+				"metadata": map[string]any{
 					"name":      "demo-deployment",
 					"namespace": "benchmark-1",
 				},
-				"spec": map[string]interface{}{
+				"spec": map[string]any{
 					"replicas": 2,
 				},
 			},
@@ -125,16 +126,16 @@ func BenchmarkEventFilterPrefixMatchSkipNameSpaces(b *testing.B) {
 func BenchmarkEventFilterSuffixMatchSkipNameSpaces(b *testing.B) {
 	dt := &ResourceDetector{}
 	dt.SkippedPropagatingNamespaces = append(dt.SkippedPropagatingNamespaces, regexp.MustCompile("^.*-benchmark$"))
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		dt.EventFilter(&unstructured.Unstructured{
-			Object: map[string]interface{}{
+			Object: map[string]any{
 				"apiVersion": "apps/v1",
 				"kind":       "Deployment",
-				"metadata": map[string]interface{}{
+				"metadata": map[string]any{
 					"name":      "demo-deployment",
 					"namespace": "example-benchmark",
 				},
-				"spec": map[string]interface{}{
+				"spec": map[string]any{
 					"replicas": 2,
 				},
 			},
@@ -145,16 +146,16 @@ func BenchmarkEventFilterSuffixMatchSkipNameSpaces(b *testing.B) {
 func BenchmarkEventFilterMultiSkipNameSpaces(b *testing.B) {
 	dt := &ResourceDetector{}
 	dt.SkippedPropagatingNamespaces = append(dt.SkippedPropagatingNamespaces, regexp.MustCompile("^.*-benchmark$"), regexp.MustCompile("^benchmark-.*$"))
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		dt.EventFilter(&unstructured.Unstructured{
-			Object: map[string]interface{}{
+			Object: map[string]any{
 				"apiVersion": "apps/v1",
 				"kind":       "Deployment",
-				"metadata": map[string]interface{}{
+				"metadata": map[string]any{
 					"name":      "demo-deployment",
 					"namespace": "benchmark-1",
 				},
-				"spec": map[string]interface{}{
+				"spec": map[string]any{
 					"replicas": 2,
 				},
 			},
@@ -165,12 +166,12 @@ func BenchmarkEventFilterMultiSkipNameSpaces(b *testing.B) {
 func BenchmarkEventFilterExtensionApiserverAuthentication(b *testing.B) {
 	dt := &ResourceDetector{}
 	dt.SkippedPropagatingNamespaces = append(dt.SkippedPropagatingNamespaces, regexp.MustCompile("^kube-.*$"))
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		dt.EventFilter(&unstructured.Unstructured{
-			Object: map[string]interface{}{
+			Object: map[string]any{
 				"apiVersion": "v1",
 				"kind":       "ConfigMap",
-				"metadata": map[string]interface{}{
+				"metadata": map[string]any{
 					"name":      "extension-apiserver-authentication",
 					"namespace": "kube-system",
 				},
@@ -254,10 +255,10 @@ func TestEventFilter(t *testing.T) {
 		{
 			name: "object in karmada-system namespace",
 			obj: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "v1",
 					"kind":       "Pod",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"namespace": "karmada-system",
 						"name":      "test-obj",
 					},
@@ -268,10 +269,10 @@ func TestEventFilter(t *testing.T) {
 		{
 			name: "object in karmada-cluster namespace",
 			obj: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "v1",
 					"kind":       "Pod",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"namespace": "karmada-cluster",
 						"name":      "test-obj",
 					},
@@ -282,10 +283,10 @@ func TestEventFilter(t *testing.T) {
 		{
 			name: "object in karmada-es-* namespace",
 			obj: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "v1",
 					"kind":       "Pod",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"namespace": "karmada-es-test",
 						"name":      "test-obj",
 					},
@@ -296,10 +297,10 @@ func TestEventFilter(t *testing.T) {
 		{
 			name: "object in skipped namespace",
 			obj: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "v1",
 					"kind":       "Pod",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"namespace": "kube-system",
 						"name":      "test-obj",
 					},
@@ -311,10 +312,10 @@ func TestEventFilter(t *testing.T) {
 		{
 			name: "object in non-skipped namespace",
 			obj: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "v1",
 					"kind":       "Pod",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"namespace": "default",
 						"name":      "test-obj",
 					},
@@ -325,10 +326,10 @@ func TestEventFilter(t *testing.T) {
 		{
 			name: "extension-apiserver-authentication configmap in kube-system",
 			obj: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "v1",
 					"kind":       "ConfigMap",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"namespace": "kube-system",
 						"name":      "extension-apiserver-authentication",
 					},
@@ -339,10 +340,10 @@ func TestEventFilter(t *testing.T) {
 		{
 			name: "cluster-scoped resource",
 			obj: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "v1",
 					"kind":       "Node",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name": "test-node",
 					},
 				},
@@ -364,16 +365,17 @@ func TestEventFilter(t *testing.T) {
 func TestOnAdd(t *testing.T) {
 	tests := []struct {
 		name            string
-		obj             interface{}
+		obj             any
 		expectedEnqueue bool
+		isInInitialList bool
 	}{
 		{
 			name: "valid unstructured object",
 			obj: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "Deployment",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "test-deployment",
 						"namespace": "default",
 					},
@@ -382,9 +384,24 @@ func TestOnAdd(t *testing.T) {
 			expectedEnqueue: true,
 		},
 		{
+			name: "valid unstructured object, with low priority",
+			obj: &unstructured.Unstructured{
+				Object: map[string]any{
+					"apiVersion": "apps/v1",
+					"kind":       "Deployment",
+					"metadata": map[string]any{
+						"name":      "test-deployment",
+						"namespace": "default",
+					},
+				},
+			},
+			expectedEnqueue: true,
+			isInInitialList: true,
+		},
+		{
 			name: "invalid unstructured object",
 			obj: &unstructured.Unstructured{
-				Object: map[string]interface{}{},
+				Object: map[string]any{},
 			},
 			expectedEnqueue: true, // The function doesn't check for validity, so it will still enqueue
 		},
@@ -410,7 +427,7 @@ func TestOnAdd(t *testing.T) {
 			d := &ResourceDetector{
 				Processor: mockProcessor,
 			}
-			d.OnAdd(tt.obj)
+			d.OnAdd(tt.obj, tt.isInInitialList)
 			if tt.expectedEnqueue {
 				assert.Equal(t, 1, mockProcessor.enqueueCount, "Object should be enqueued")
 				assert.IsType(t, ResourceItem{}, mockProcessor.lastEnqueued, "Enqueued item should be of type ResourceItem")
@@ -426,67 +443,65 @@ func TestOnAdd(t *testing.T) {
 func TestOnUpdate(t *testing.T) {
 	tests := []struct {
 		name                      string
-		oldObj                    interface{}
-		newObj                    interface{}
+		oldObj                    any
+		newObj                    any
 		expectedEnqueue           bool
-		expectedChangeByKarmada   bool
 		expectToUnstructuredError bool
 	}{
 		{
 			name: "valid update with changes",
 			oldObj: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "Deployment",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "test-deployment",
 						"namespace": "default",
 					},
-					"spec": map[string]interface{}{
+					"spec": map[string]any{
 						"replicas": int64(1),
 					},
 				},
 			},
 			newObj: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "Deployment",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "test-deployment",
 						"namespace": "default",
 					},
-					"spec": map[string]interface{}{
+					"spec": map[string]any{
 						"replicas": int64(2),
 					},
 				},
 			},
-			expectedEnqueue:         true,
-			expectedChangeByKarmada: false,
+			expectedEnqueue: true,
 		},
 		{
 			name: "update without changes",
 			oldObj: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "Deployment",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "test-deployment",
 						"namespace": "default",
 					},
-					"spec": map[string]interface{}{
+					"spec": map[string]any{
 						"replicas": int64(1),
 					},
 				},
 			},
 			newObj: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "Deployment",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "test-deployment",
 						"namespace": "default",
 					},
-					"spec": map[string]interface{}{
+					"spec": map[string]any{
 						"replicas": int64(1),
 					},
 				},
@@ -502,30 +517,29 @@ func TestOnUpdate(t *testing.T) {
 		{
 			name: "change by Karmada",
 			oldObj: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "Deployment",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "test-deployment",
 						"namespace": "default",
 					},
 				},
 			},
 			newObj: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "Deployment",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "test-deployment",
 						"namespace": "default",
-						"annotations": map[string]interface{}{
+						"annotations": map[string]any{
 							util.PolicyPlacementAnnotation: "test",
 						},
 					},
 				},
 			},
-			expectedEnqueue:         true,
-			expectedChangeByKarmada: true,
+			expectedEnqueue: true,
 		},
 		{
 			name: "core v1 object",
@@ -573,7 +587,6 @@ func TestOnUpdate(t *testing.T) {
 				assert.IsType(t, ResourceItem{}, mockProcessor.lastEnqueued, "Enqueued item should be of type ResourceItem")
 				enqueued := mockProcessor.lastEnqueued.(ResourceItem)
 				assert.Equal(t, tt.newObj, enqueued.Obj, "Enqueued object should match the new object")
-				assert.Equal(t, tt.expectedChangeByKarmada, enqueued.ResourceChangeByKarmada, "ResourceChangeByKarmada flag should match expected value")
 			} else {
 				assert.Equal(t, 0, mockProcessor.enqueueCount, "Object should not be enqueued")
 			}
@@ -590,10 +603,10 @@ func TestOnDelete(t *testing.T) {
 		{
 			name: "valid object",
 			obj: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "Deployment",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "test-deployment",
 						"namespace": "default",
 					},
@@ -604,7 +617,7 @@ func TestOnDelete(t *testing.T) {
 		{
 			name: "invalid object",
 			obj: &unstructured.Unstructured{
-				Object: map[string]interface{}{},
+				Object: map[string]any{},
 			},
 			expectedEnqueue: true, // The function doesn't check for validity, so it will still enqueue
 		},
@@ -638,10 +651,10 @@ func TestLookForMatchedPolicy(t *testing.T) {
 		{
 			name: "matching policy found",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "Deployment",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "test-deployment",
 						"namespace": "default",
 					},
@@ -727,10 +740,10 @@ func TestLookForMatchedClusterPolicy(t *testing.T) {
 		{
 			name: "matching cluster policy found",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "Deployment",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "test-deployment",
 						"namespace": "default",
 					},
@@ -803,6 +816,36 @@ func TestLookForMatchedClusterPolicy(t *testing.T) {
 	}
 }
 
+func verifyWorkloadAffinity(t *testing.T, object *unstructured.Unstructured, policySpec *policyv1alpha1.PropagationSpec, bindingSpec *workv1alpha2.ResourceBindingSpec) {
+	if policySpec.Placement.WorkloadAffinity == nil {
+		assert.Nil(t, bindingSpec.WorkloadAffinityGroups)
+		return
+	}
+
+	expectedAffinityGroup := ""
+	if affinityTerm := policySpec.Placement.WorkloadAffinity.Affinity; affinityTerm != nil {
+		if affinityValue, ok := object.GetLabels()[affinityTerm.GroupByLabelKey]; ok {
+			expectedAffinityGroup = fmt.Sprintf("%s=%s", affinityTerm.GroupByLabelKey, affinityValue)
+		}
+	}
+
+	expectedAntiAffinityGroup := ""
+	if antiAffinityTerm := policySpec.Placement.WorkloadAffinity.AntiAffinity; antiAffinityTerm != nil {
+		if antiAffinityValue, ok := object.GetLabels()[antiAffinityTerm.GroupByLabelKey]; ok {
+			expectedAntiAffinityGroup = fmt.Sprintf("%s=%s", antiAffinityTerm.GroupByLabelKey, antiAffinityValue)
+		}
+	}
+
+	if expectedAffinityGroup == "" && expectedAntiAffinityGroup == "" {
+		assert.Nil(t, bindingSpec.WorkloadAffinityGroups)
+		return
+	}
+
+	assert.NotNil(t, bindingSpec.WorkloadAffinityGroups)
+	assert.Equal(t, expectedAffinityGroup, bindingSpec.WorkloadAffinityGroups.AffinityGroup)
+	assert.Equal(t, expectedAntiAffinityGroup, bindingSpec.WorkloadAffinityGroups.AntiAffinityGroup)
+}
+
 func TestApplyPolicy(t *testing.T) {
 	tests := []struct {
 		name                    string
@@ -810,14 +853,15 @@ func TestApplyPolicy(t *testing.T) {
 		policy                  *policyv1alpha1.PropagationPolicy
 		resourceChangeByKarmada bool
 		expectError             bool
+		enableWorkloadAffinity  bool
 	}{
 		{
 			name: "basic apply policy",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "Deployment",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "test-deployment",
 						"namespace": "default",
 						"uid":       "test-uid",
@@ -833,6 +877,139 @@ func TestApplyPolicy(t *testing.T) {
 			},
 			resourceChangeByKarmada: false,
 			expectError:             false,
+			enableWorkloadAffinity:  false,
+		},
+		{
+			name: "both affinity and antiAffinity label exists",
+			object: &unstructured.Unstructured{
+				Object: map[string]any{
+					"apiVersion": "apps/v1",
+					"kind":       "Deployment",
+					"metadata": map[string]any{
+						"name":      "test-deployment",
+						"namespace": "default",
+						"uid":       "test-uid",
+						"labels": map[string]any{
+							"affinityKey":     "affinityValue",
+							"antiAffinityKey": "antiAffinityValue",
+						},
+					},
+				},
+			},
+			policy: &policyv1alpha1.PropagationPolicy{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-policy",
+					Namespace: "default",
+				},
+				Spec: policyv1alpha1.PropagationSpec{
+					Placement: policyv1alpha1.Placement{
+						WorkloadAffinity: &policyv1alpha1.WorkloadAffinity{
+							Affinity:     &policyv1alpha1.WorkloadAffinityTerm{GroupByLabelKey: "affinityKey"},
+							AntiAffinity: &policyv1alpha1.WorkloadAntiAffinityTerm{GroupByLabelKey: "antiAffinityKey"},
+						},
+					},
+				},
+			},
+			resourceChangeByKarmada: false,
+			expectError:             false,
+			enableWorkloadAffinity:  true,
+		},
+		{
+			name: "Only Affinity rule and label exists",
+			object: &unstructured.Unstructured{
+				Object: map[string]any{
+					"apiVersion": "apps/v1",
+					"kind":       "Deployment",
+					"metadata": map[string]any{
+						"name":      "test-deployment",
+						"namespace": "default",
+						"uid":       "test-uid",
+						"labels": map[string]any{
+							"affinityKey": "affinityValue",
+						},
+					},
+				},
+			},
+			policy: &policyv1alpha1.PropagationPolicy{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-policy",
+					Namespace: "default",
+				},
+				Spec: policyv1alpha1.PropagationSpec{
+					Placement: policyv1alpha1.Placement{
+						WorkloadAffinity: &policyv1alpha1.WorkloadAffinity{
+							Affinity: &policyv1alpha1.WorkloadAffinityTerm{GroupByLabelKey: "affinityKey"},
+						},
+					},
+				},
+			},
+			resourceChangeByKarmada: false,
+			expectError:             false,
+			enableWorkloadAffinity:  true,
+		},
+		{
+			name: "Only Anti Affinity rule and label exists",
+			object: &unstructured.Unstructured{
+				Object: map[string]any{
+					"apiVersion": "apps/v1",
+					"kind":       "Deployment",
+					"metadata": map[string]any{
+						"name":      "test-deployment",
+						"namespace": "default",
+						"uid":       "test-uid",
+						"labels": map[string]any{
+							"antiAffinityKey": "antiAffinityValue",
+						},
+					},
+				},
+			},
+			policy: &policyv1alpha1.PropagationPolicy{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-policy",
+					Namespace: "default",
+				},
+				Spec: policyv1alpha1.PropagationSpec{
+					Placement: policyv1alpha1.Placement{
+						WorkloadAffinity: &policyv1alpha1.WorkloadAffinity{
+							AntiAffinity: &policyv1alpha1.WorkloadAntiAffinityTerm{GroupByLabelKey: "antiAffinityKey"},
+						},
+					},
+				},
+			},
+			resourceChangeByKarmada: false,
+			expectError:             false,
+			enableWorkloadAffinity:  true,
+		},
+		{
+			name: "Affinity/AntiAffinity rule exists but label missing",
+			object: &unstructured.Unstructured{
+				Object: map[string]any{
+					"apiVersion": "apps/v1",
+					"kind":       "Deployment",
+					"metadata": map[string]any{
+						"name":      "test-deployment",
+						"namespace": "default",
+						"uid":       "test-uid",
+					},
+				},
+			},
+			policy: &policyv1alpha1.PropagationPolicy{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-policy",
+					Namespace: "default",
+				},
+				Spec: policyv1alpha1.PropagationSpec{
+					Placement: policyv1alpha1.Placement{
+						WorkloadAffinity: &policyv1alpha1.WorkloadAffinity{
+							Affinity:     &policyv1alpha1.WorkloadAffinityTerm{GroupByLabelKey: "affinityKey"},
+							AntiAffinity: &policyv1alpha1.WorkloadAntiAffinityTerm{GroupByLabelKey: "antiAffinityKey"},
+						},
+					},
+				},
+			},
+			resourceChangeByKarmada: false,
+			expectError:             false,
+			enableWorkloadAffinity:  true,
 		},
 	}
 
@@ -851,6 +1028,10 @@ func TestApplyPolicy(t *testing.T) {
 				RESTMapper:          &mockRESTMapper{},
 			}
 
+			if err := features.FeatureGate.Set(fmt.Sprintf("%s=%v", features.WorkloadAffinity, tt.enableWorkloadAffinity)); err != nil {
+				t.Fatalf("Failed to set feature gate %s to %v: %v", features.WorkloadAffinity, tt.enableWorkloadAffinity, err)
+			}
+
 			err := d.ApplyPolicy(tt.object, keys.ClusterWideKey{}, tt.resourceChangeByKarmada, tt.policy)
 
 			if tt.expectError {
@@ -866,6 +1047,8 @@ func TestApplyPolicy(t *testing.T) {
 				}, binding)
 				assert.NoError(t, err)
 				assert.Equal(t, tt.object.GetName(), binding.Spec.Resource.Name)
+
+				verifyWorkloadAffinity(t, tt.object, &tt.policy.Spec, &binding.Spec)
 			}
 		})
 	}
@@ -877,14 +1060,15 @@ func TestApplyClusterPolicy(t *testing.T) {
 		policy                  *policyv1alpha1.ClusterPropagationPolicy
 		resourceChangeByKarmada bool
 		expectError             bool
+		enableWorkloadAffinity  bool
 	}{
 		{
 			name: "apply cluster policy for namespaced resource",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "Deployment",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "test-deployment",
 						"namespace": "default",
 						"uid":       "test-uid",
@@ -899,14 +1083,15 @@ func TestApplyClusterPolicy(t *testing.T) {
 			},
 			resourceChangeByKarmada: false,
 			expectError:             false,
+			enableWorkloadAffinity:  false,
 		},
 		{
 			name: "apply cluster policy for cluster-scoped resource",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "rbac.authorization.k8s.io/v1",
 					"kind":       "ClusterRole",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name": "test-cluster-role",
 						"uid":  "test-uid",
 					},
@@ -920,6 +1105,42 @@ func TestApplyClusterPolicy(t *testing.T) {
 			},
 			resourceChangeByKarmada: false,
 			expectError:             false,
+			enableWorkloadAffinity:  false,
+		},
+		{
+			name: "both affinity and antiAffinity label exists",
+			object: &unstructured.Unstructured{
+				Object: map[string]any{
+					"apiVersion": "apps/v1",
+					"kind":       "Deployment",
+					"metadata": map[string]any{
+						"name":      "test-deployment",
+						"namespace": "default",
+						"uid":       "test-uid",
+						"labels": map[string]any{
+							"affinityKey":     "affinityValue",
+							"antiAffinityKey": "antiAffinityValue",
+						},
+					},
+				},
+			},
+			policy: &policyv1alpha1.ClusterPropagationPolicy{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-policy",
+					Namespace: "default",
+				},
+				Spec: policyv1alpha1.PropagationSpec{
+					Placement: policyv1alpha1.Placement{
+						WorkloadAffinity: &policyv1alpha1.WorkloadAffinity{
+							Affinity:     &policyv1alpha1.WorkloadAffinityTerm{GroupByLabelKey: "affinityKey"},
+							AntiAffinity: &policyv1alpha1.WorkloadAntiAffinityTerm{GroupByLabelKey: "antiAffinityKey"},
+						},
+					},
+				},
+			},
+			resourceChangeByKarmada: false,
+			expectError:             false,
+			enableWorkloadAffinity:  true,
 		},
 	}
 
@@ -938,6 +1159,10 @@ func TestApplyClusterPolicy(t *testing.T) {
 				RESTMapper:          &mockRESTMapper{},
 			}
 
+			if err := features.FeatureGate.Set(fmt.Sprintf("%s=%v", features.WorkloadAffinity, tt.enableWorkloadAffinity)); err != nil {
+				t.Fatalf("Failed to set feature gate %s to %v: %v", features.WorkloadAffinity, tt.enableWorkloadAffinity, err)
+			}
+
 			err := d.ApplyClusterPolicy(tt.object, keys.ClusterWideKey{}, tt.resourceChangeByKarmada, tt.policy)
 
 			if tt.expectError {
@@ -954,6 +1179,7 @@ func TestApplyClusterPolicy(t *testing.T) {
 					}, binding)
 					assert.NoError(t, err)
 					assert.Equal(t, tt.object.GetName(), binding.Spec.Resource.Name)
+					verifyWorkloadAffinity(t, tt.object, &tt.policy.Spec, &binding.Spec)
 				} else {
 					binding := &workv1alpha2.ClusterResourceBinding{}
 					err = fakeClient.Get(context.TODO(), client.ObjectKey{
@@ -963,6 +1189,71 @@ func TestApplyClusterPolicy(t *testing.T) {
 					assert.Equal(t, tt.object.GetName(), binding.Spec.Resource.Name)
 				}
 			}
+		})
+	}
+}
+
+func TestEnqueueResourceKeyWithActivationPref(t *testing.T) {
+	testClusterWideKey := keys.ClusterWideKey{
+		Group:     "foo",
+		Version:   "foo",
+		Kind:      "foo",
+		Namespace: "foo",
+		Name:      "foo",
+	}
+	tests := []struct {
+		name string
+		key  keys.ClusterWideKey
+		pref policyv1alpha1.ActivationPreference
+		want keys.ClusterWideKeyWithConfig
+	}{
+		{
+			name: "lazy pp and resourceChangeByKarmada is true",
+			key:  testClusterWideKey,
+			pref: policyv1alpha1.LazyActivation,
+			want: keys.ClusterWideKeyWithConfig{
+				ClusterWideKey:          testClusterWideKey,
+				ResourceChangeByKarmada: true,
+			},
+		},
+		{
+			name: "non-lazy ignores ResourceChangeByKarmada",
+			key:  testClusterWideKey,
+			pref: "",
+			want: keys.ClusterWideKeyWithConfig{
+				ClusterWideKey:          testClusterWideKey,
+				ResourceChangeByKarmada: false,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			detector := ResourceDetector{
+				Processor: util.NewAsyncWorker(util.Options{
+					Name:    "resource detector",
+					KeyFunc: ResourceItemKeyFunc,
+					ReconcileFunc: func(key util.QueueKey) (err error) {
+						defer cancel()
+						defer func() {
+							assert.NoError(t, err)
+						}()
+						clusterWideKeyWithConfig, ok := key.(keys.ClusterWideKeyWithConfig)
+						if !ok {
+							err = fmt.Errorf("invalid key")
+							return err
+						}
+						if clusterWideKeyWithConfig != tt.want {
+							err = fmt.Errorf("unexpected key. want:%+v, got:%+v", tt.want, clusterWideKeyWithConfig)
+							return err
+						}
+						return nil
+					},
+				}),
+			}
+			detector.Processor.Run(ctx, 1)
+			detector.enqueueResourceTemplateForPolicyChange(tt.key, tt.pref)
+			<-ctx.Done()
 		})
 	}
 }
@@ -983,18 +1274,26 @@ func setupTestScheme() *runtime.Scheme {
 // mockAsyncWorker is a mock implementation of util.AsyncWorker
 type mockAsyncWorker struct {
 	enqueueCount int
-	lastEnqueued interface{}
+	lastEnqueued any
 }
 
-func (m *mockAsyncWorker) Enqueue(item interface{}) {
+func (m *mockAsyncWorker) Enqueue(item any) {
 	m.enqueueCount++
 	m.lastEnqueued = item
 }
 
-func (m *mockAsyncWorker) Add(_ interface{}) {
+func (m *mockAsyncWorker) Add(_ any) {
 	m.enqueueCount++
 }
-func (m *mockAsyncWorker) AddAfter(_ interface{}, _ time.Duration) {}
+func (m *mockAsyncWorker) AddAfter(_ any, _ time.Duration) {}
+func (m *mockAsyncWorker) AddWithOpts(_ util.AddOpts, items ...any) {
+	for _, item := range items {
+		m.Add(item)
+	}
+}
+func (m *mockAsyncWorker) EnqueueWithOpts(_ util.AddOpts, item any) {
+	m.Enqueue(item)
+}
 
 func (m *mockAsyncWorker) Run(_ context.Context, _ int) {}
 
@@ -1043,6 +1342,10 @@ func (m *mockRESTMapper) ResourceSingularizer(resource string) (string, error) {
 
 // mockResourceInterpreter is a mock implementation of the ResourceInterpreter interface
 type mockResourceInterpreter struct{}
+
+func (m *mockResourceInterpreter) GetComponents(_ *unstructured.Unstructured) ([]workv1alpha2.Component, error) {
+	return nil, nil
+}
 
 func (m *mockResourceInterpreter) Start(_ context.Context) error {
 	return nil

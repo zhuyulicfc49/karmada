@@ -53,9 +53,9 @@ func TestClusterReadyMetrics(t *testing.T) {
 				},
 			},
 			want: `
-# HELP cluster_ready_state State of the cluster(1 if ready, 0 otherwise).
+# HELP cluster_ready_state State of the cluster (1 if ready, 0 otherwise).
 # TYPE cluster_ready_state gauge
-cluster_ready_state{cluster_name="foo"} 1
+cluster_ready_state{member_cluster="foo"} 1
 `,
 		},
 		{
@@ -74,9 +74,9 @@ cluster_ready_state{cluster_name="foo"} 1
 				},
 			},
 			want: `
-# HELP cluster_ready_state State of the cluster(1 if ready, 0 otherwise).
+# HELP cluster_ready_state State of the cluster (1 if ready, 0 otherwise).
 # TYPE cluster_ready_state gauge
-cluster_ready_state{cluster_name="foo"} 0
+cluster_ready_state{member_cluster="foo"} 0
 `,
 		},
 	}
@@ -112,7 +112,7 @@ func TestClusterTotalNodeNumberMetrics(t *testing.T) {
 	want := `
 # HELP cluster_node_number Number of nodes in the cluster.
 # TYPE cluster_node_number gauge
-cluster_node_number{cluster_name="foo"} 100
+cluster_node_number{member_cluster="foo"} 100
 `
 	clusterTotalNodeNumberGauge.Reset()
 	RecordClusterStatus(testCluster)
@@ -145,7 +145,7 @@ func TestClusterReadyNodeNumberMetrics(t *testing.T) {
 	want := `
 # HELP cluster_ready_node_number Number of ready nodes in the cluster.
 # TYPE cluster_ready_node_number gauge
-cluster_ready_node_number{cluster_name="foo"} 10
+cluster_ready_node_number{member_cluster="foo"} 10
 `
 	clusterReadyNodeNumberGauge.Reset()
 	RecordClusterStatus(testCluster)
@@ -179,7 +179,7 @@ func TestClusterMemoryAllocatableMetrics(t *testing.T) {
 	want := `
 # HELP cluster_memory_allocatable_bytes Allocatable cluster memory resource in bytes.
 # TYPE cluster_memory_allocatable_bytes gauge
-cluster_memory_allocatable_bytes{cluster_name="foo"} 200
+cluster_memory_allocatable_bytes{member_cluster="foo"} 200
 `
 	clusterMemoryAllocatableGauge.Reset()
 	RecordClusterStatus(testCluster)
@@ -213,7 +213,7 @@ func TestClusterCPUAllocatableMetrics(t *testing.T) {
 	want := `
 # HELP cluster_cpu_allocatable_number Number of allocatable CPU in the cluster.
 # TYPE cluster_cpu_allocatable_number gauge
-cluster_cpu_allocatable_number{cluster_name="foo"} 0.2
+cluster_cpu_allocatable_number{member_cluster="foo"} 0.2
 `
 	clusterCPUAllocatableGauge.Reset()
 	RecordClusterStatus(testCluster)
@@ -247,7 +247,7 @@ func TestClusterPodAllocatableMetrics(t *testing.T) {
 	want := `
 # HELP cluster_pod_allocatable_number Number of allocatable pods in the cluster.
 # TYPE cluster_pod_allocatable_number gauge
-cluster_pod_allocatable_number{cluster_name="foo"} 110
+cluster_pod_allocatable_number{member_cluster="foo"} 110
 `
 	clusterPodAllocatableGauge.Reset()
 	RecordClusterStatus(testCluster)
@@ -281,7 +281,7 @@ func TestClusterMemoryAllocatedMetrics(t *testing.T) {
 	want := `
 # HELP cluster_memory_allocated_bytes Allocated cluster memory resource in bytes.
 # TYPE cluster_memory_allocated_bytes gauge
-cluster_memory_allocated_bytes{cluster_name="foo"} 200
+cluster_memory_allocated_bytes{member_cluster="foo"} 200
 `
 	clusterMemoryAllocatedGauge.Reset()
 	RecordClusterStatus(testCluster)
@@ -315,7 +315,7 @@ func TestClusterCPUAllocatedMetrics(t *testing.T) {
 	want := `
 # HELP cluster_cpu_allocated_number Number of allocated CPU in the cluster.
 # TYPE cluster_cpu_allocated_number gauge
-cluster_cpu_allocated_number{cluster_name="foo"} 0.2
+cluster_cpu_allocated_number{member_cluster="foo"} 0.2
 `
 	clusterCPUAllocatedGauge.Reset()
 	RecordClusterStatus(testCluster)
@@ -349,7 +349,7 @@ func TestClusterPodAllocatedMetrics(t *testing.T) {
 	want := `
 # HELP cluster_pod_allocated_number Number of allocated pods in the cluster.
 # TYPE cluster_pod_allocated_number gauge
-cluster_pod_allocated_number{cluster_name="foo"} 110
+cluster_pod_allocated_number{member_cluster="foo"} 110
 `
 	clusterPodAllocatedGauge.Reset()
 	RecordClusterStatus(testCluster)

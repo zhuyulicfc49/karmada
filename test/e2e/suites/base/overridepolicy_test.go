@@ -28,6 +28,7 @@ import (
 	"k8s.io/klog/v2"
 
 	policyv1alpha1 "github.com/karmada-io/karmada/pkg/apis/policy/v1alpha1"
+	"github.com/karmada-io/karmada/pkg/events"
 	"github.com/karmada-io/karmada/test/e2e/framework"
 	"github.com/karmada-io/karmada/test/helper"
 )
@@ -112,6 +113,13 @@ var _ = ginkgo.Describe("[OverridePolicy] apply overriders testing", func() {
 		})
 
 		ginkgo.It("deployment labelsOverride testing", func() {
+			ginkgo.By("checking ApplyOverridePolicySucceed event on deployment", func() {
+				framework.WaitEventFitWith(kubeClient, deploymentNamespace, deploymentName,
+					func(event corev1.Event) bool {
+						return event.Reason == events.EventReasonApplyOverridePolicySucceed
+					})
+			})
+
 			klog.Infof("check if deployment present on member clusters have correct labels value")
 			framework.WaitDeploymentPresentOnClustersFitWith(framework.ClusterNames(), deployment.Namespace, deployment.Name,
 				func(deployment *appsv1.Deployment) bool {
@@ -274,6 +282,13 @@ var _ = ginkgo.Describe("[OverridePolicy] apply overriders testing", func() {
 		})
 
 		ginkgo.It("deployment imageOverride testing", func() {
+			ginkgo.By("checking ApplyOverridePolicySucceed event", func() {
+				framework.WaitEventFitWith(kubeClient, deploymentNamespace, deploymentName,
+					func(event corev1.Event) bool {
+						return event.Reason == events.EventReasonApplyOverridePolicySucceed
+					})
+			})
+
 			klog.Infof("check if deployment present on member clusters have correct image value")
 			framework.WaitDeploymentPresentOnClustersFitWith(framework.ClusterNames(), deployment.Namespace, deployment.Name,
 				func(deployment *appsv1.Deployment) bool {
@@ -422,6 +437,13 @@ var _ = ginkgo.Describe("[OverridePolicy] apply overriders testing", func() {
 		})
 
 		ginkgo.It("deployment imageOverride testing", func() {
+			ginkgo.By("checking ApplyOverridePolicySucceed event", func() {
+				framework.WaitEventFitWith(kubeClient, deploymentNamespace, deploymentName,
+					func(event corev1.Event) bool {
+						return event.Reason == events.EventReasonApplyOverridePolicySucceed
+					})
+			})
+
 			klog.Infof("check if deployment present on member clusters have correct image value")
 			framework.WaitDeploymentPresentOnClustersFitWith(framework.ClusterNames(), deployment.Namespace, deployment.Name,
 				func(deployment *appsv1.Deployment) bool {
@@ -703,6 +725,13 @@ var _ = framework.SerialDescribe("OverridePolicy with nil resourceSelector testi
 		})
 
 		ginkgo.It("deployment imageOverride testing", func() {
+			ginkgo.By("checking ApplyOverridePolicySucceed event", func() {
+				framework.WaitEventFitWith(kubeClient, deploymentNamespace, deploymentName,
+					func(event corev1.Event) bool {
+						return event.Reason == events.EventReasonApplyOverridePolicySucceed
+					})
+			})
+
 			klog.Infof("check if deployment present on member clusters have correct image value")
 			framework.WaitDeploymentPresentOnClustersFitWith(framework.ClusterNames(), deployment.Namespace, deployment.Name,
 				func(deployment *appsv1.Deployment) bool {
@@ -788,6 +817,12 @@ var _ = ginkgo.Describe("[OverrideRules] apply overriders testing", func() {
 		})
 
 		ginkgo.It("deployment imageOverride testing", func() {
+			ginkgo.By("checking ApplyOverridePolicySucceed event", func() {
+				framework.WaitEventFitWith(kubeClient, deploymentNamespace, deploymentName,
+					func(event corev1.Event) bool {
+						return event.Reason == events.EventReasonApplyOverridePolicySucceed
+					})
+			})
 			klog.Infof("check if deployment present on member clusters have correct image value")
 			framework.WaitDeploymentPresentOnClustersFitWith(framework.ClusterNames(), deployment.Namespace, deployment.Name,
 				func(deployment *appsv1.Deployment) bool {
@@ -881,6 +916,7 @@ var _ = ginkgo.Describe("[OverrideRules] apply overriders testing", func() {
 				return true
 			})
 		})
+
 	})
 
 	ginkgo.Context("Deployment override specific images in container list", func() {
@@ -946,6 +982,12 @@ var _ = ginkgo.Describe("[OverrideRules] apply overriders testing", func() {
 		})
 
 		ginkgo.It("deployment imageOverride testing", func() {
+			ginkgo.By("checking ApplyOverridePolicySucceed event", func() {
+				framework.WaitEventFitWith(kubeClient, deploymentNamespace, deploymentName,
+					func(event corev1.Event) bool {
+						return event.Reason == events.EventReasonApplyOverridePolicySucceed
+					})
+			})
 			klog.Infof("check if deployment present on member clusters have correct image value")
 			framework.WaitDeploymentPresentOnClustersFitWith(framework.ClusterNames(), deployment.Namespace, deployment.Name,
 				func(deployment *appsv1.Deployment) bool {

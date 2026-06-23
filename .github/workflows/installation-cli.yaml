@@ -24,85 +24,50 @@ jobs:
         # Here support the latest three minor releases of Kubernetes, this can be considered to be roughly
         # the same as the End of Life of the Kubernetes release: https://kubernetes.io/releases/
         # Please remember to update the CI Schedule Workflow when we add a new version.
-        k8s: [ v1.31.0, v1.32.0, v1.33.0 ]
+        k8s: [ v1.33.0, v1.34.0, v1.35.0 ]
     steps:
+      # Free up disk space on Ubuntu
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        with:
+          # this might remove tools that are actually needed, if set to "true" but frees about 6 GB
+          tool-cache: false
+          # all of these default to true, but feel free to set to "false" if necessary for your workflow
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: false
       - name: checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           # Number of commits to fetch. 0 indicates all history for all branches and tags.
           # We need to guess version via git tags.
           fetch-depth: 0
       - name: install Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
           go-version-file: go.mod
-      - name: run karmadactl init test
+      - name: setup init e2e test environment
         run: |
           export CLUSTER_VERSION=kindest/node:${{ matrix.k8s }}
-
-          # init e2e environment
-          hack/cli-testing-environment.sh
-
-          # run a single e2e
-          export PULL_BASED_CLUSTERS="member1:${HOME}/.kube/member1.config"  
-          export KUBECONFIG=${HOME}/.kube/karmada-host.config:${HOME}/karmada/karmada-apiserver.config
-          GO111MODULE=on go install github.com/onsi/ginkgo/v2/ginkgo
-          ginkgo -v --race --trace -p  --focus="[BasicPropagation] propagation testing deployment propagation testing"  ./test/e2e/suites/base
-      - name: export logs
-        if: always()
+          hack/init-e2e-environment.sh
+      - name: run e2e
         run: |
-          export ARTIFACTS_PATH=${{ github.workspace }}/karmadactl-test-logs/${{ matrix.k8s }}/
-          mkdir -p $ARTIFACTS_PATH
-
-          mkdir -p $ARTIFACTS_PATH/karmada-host
-          kind export logs --name=karmada-host $ARTIFACTS_PATH/karmada-host
+          export ARTIFACTS_PATH=${{ github.workspace }}/karmada-init-e2e-logs/${{ matrix.k8s }}/
+          export REGISTRY="docker.io/karmada"
+          export VERSION="latest"
+          hack/run-e2e-init.sh
       - name: upload logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: karmadactl_test_logs_${{ matrix.k8s }}
-          path: ${{ github.workspace }}/karmadactl-test-logs/${{ matrix.k8s }}/
-
-  init-config:
-    name: init with config file
-    runs-on: ubuntu-22.04
-    strategy:
-      fail-fast: false
-      matrix:
-        # Latest three minor releases of Kubernetes
-        k8s: [ v1.31.0, v1.32.0, v1.33.0 ]
-    steps:
-      - name: checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: install Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - name: run karmadactl init with config file test
-        run: |
-          export CLUSTER_VERSION=kindest/node:${{ matrix.k8s }}
-          
-          # Run custom test for workload configuration deployment
-          hack/cli-testing-init-with-config.sh
-          
-          # run a single e2e
-          export PULL_BASED_CLUSTERS="config-member1:${HOME}/.kube/config-member1.config"
-          export KUBECONFIG=${HOME}/.kube/karmada-host.config:${HOME}/karmada/karmada-apiserver.config
-          GO111MODULE=on go install github.com/onsi/ginkgo/v2/ginkgo
-          ginkgo -v --race --trace -p  --focus="[BasicPropagation] propagation testing deployment propagation testing"  ./test/e2e/suites/base
-      - name: export logs for config test
+          name: karmada_init_e2e_log_${{ matrix.k8s }}
+          path: ${{ github.workspace }}/karmada-init-e2e-logs/${{ matrix.k8s }}/
+      - name: upload kind logs
         if: always()
-        run: |
-          export ARTIFACTS_PATH=${{ github.workspace }}/karmadactl-test-logs/${{ matrix.k8s }}/config
-          mkdir -p $ARTIFACTS_PATH
-          
-          mkdir -p $ARTIFACTS_PATH/karmada-host
-          kind export logs --name=karmada-host $ARTIFACTS_PATH/karmada-host
-      - name: upload config test logs
-        if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: karmadactl_config_test_logs_${{ matrix.k8s }}
-          path: ${{ github.workspace }}/karmadactl-test-logs/${{ matrix.k8s }}/config/
+          name: karmada_init_kind_log_${{ matrix.k8s }}
+          path: /tmp/karmada/

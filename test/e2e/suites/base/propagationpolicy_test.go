@@ -97,16 +97,84 @@ var _ = ginkgo.Describe("[BasicCase] PropagationPolicy testing", func() {
 		})
 
 		ginkgo.It("deployment propagation testing", func() {
-			framework.WaitDeploymentPresentOnClustersFitWith(framework.ClusterNames(), deployment.Namespace, deployment.Name,
-				func(*appsv1.Deployment) bool {
-					return true
-				})
+			ginkgo.By("checking ApplyPolicySucceed event", func() {
+				framework.WaitEventFitWith(kubeClient, deploymentNamespace, deploymentName,
+					func(event corev1.Event) bool {
+						return event.Reason == events.EventReasonApplyPolicySucceed
+					})
+			})
 
-			framework.UpdateDeploymentReplicas(kubeClient, deployment, updateDeploymentReplicas)
-			framework.WaitDeploymentPresentOnClustersFitWith(framework.ClusterNames(), deployment.Namespace, deployment.Name,
-				func(deployment *appsv1.Deployment) bool {
-					return *deployment.Spec.Replicas == updateDeploymentReplicas
-				})
+			ginkgo.By("checking GetReplicasSucceed event", func() {
+				framework.WaitEventFitWith(kubeClient, deploymentNamespace, deploymentName,
+					func(event corev1.Event) bool {
+						return event.Reason == events.EventReasonGetReplicasSucceed
+					})
+			})
+
+			// binding events — fired on the Deployment object (mirrored from ResourceBinding)
+			ginkgo.By("checking ScheduleBindingSucceed event", func() {
+				framework.WaitEventFitWith(kubeClient, deploymentNamespace, deploymentName,
+					func(event corev1.Event) bool {
+						return event.Reason == events.EventReasonScheduleBindingSucceed
+					})
+			})
+
+			ginkgo.By("checking SyncWorkSucceed event", func() {
+				framework.WaitEventFitWith(kubeClient, deploymentNamespace, deploymentName,
+					func(event corev1.Event) bool {
+						return event.Reason == events.EventReasonSyncWorkSucceed
+					})
+			})
+
+			ginkgo.By("checking SyncWorkloadSucceed event on work object", func() {
+				workName := names.GenerateWorkName(deployment.Kind, deployment.Name, deployment.Namespace)
+				esName := names.GenerateExecutionSpaceName(framework.ClusterNames()[0])
+				framework.WaitEventFitWith(kubeClient, esName, workName,
+					func(event corev1.Event) bool {
+						return event.Reason == events.EventReasonSyncWorkloadSucceed
+					})
+			})
+
+			ginkgo.By("waiting for deployment to be present on clusters", func() {
+				framework.WaitDeploymentPresentOnClustersFitWith(framework.ClusterNames(), deployment.Namespace, deployment.Name,
+					func(*appsv1.Deployment) bool {
+						return true
+					})
+			})
+
+			ginkgo.By("checking AggregateStatusSucceed event", func() {
+				framework.WaitEventFitWith(kubeClient, deploymentNamespace, deploymentName,
+					func(event corev1.Event) bool {
+						return event.Reason == events.EventReasonAggregateStatusSucceed
+					})
+			})
+
+			// work object events — fired on the Work object in execution space
+			ginkgo.By("checking ReflectStatusSucceed event on work object", func() {
+				workName := names.GenerateWorkName(deployment.Kind, deployment.Name, deployment.Namespace)
+				esName := names.GenerateExecutionSpaceName(framework.ClusterNames()[0])
+				framework.WaitEventFitWith(kubeClient, esName, workName,
+					func(event corev1.Event) bool {
+						return event.Reason == events.EventReasonReflectStatusSucceed
+					})
+			})
+
+			ginkgo.By("checking InterpretHealthSucceed event on work object", func() {
+				workName := names.GenerateWorkName(deployment.Kind, deployment.Name, deployment.Namespace)
+				esName := names.GenerateExecutionSpaceName(framework.ClusterNames()[0])
+				framework.WaitEventFitWith(kubeClient, esName, workName,
+					func(event corev1.Event) bool {
+						return event.Reason == events.EventReasonInterpretHealthSucceed
+					})
+			})
+
+			ginkgo.By("updating replicas and verifying propagation", func() {
+				framework.UpdateDeploymentReplicas(kubeClient, deployment, updateDeploymentReplicas)
+				framework.WaitDeploymentPresentOnClustersFitWith(framework.ClusterNames(), deployment.Namespace, deployment.Name,
+					func(deployment *appsv1.Deployment) bool {
+						return *deployment.Spec.Replicas == updateDeploymentReplicas
+					})
+			})
 		})
 
 		ginkgo.It("adds dispatching event with a dispatching message", func() {
@@ -152,12 +220,50 @@ var _ = ginkgo.Describe("[BasicCase] PropagationPolicy testing", func() {
 		})
 
 		ginkgo.It("service propagation testing", func() {
+			ginkgo.By("checking ApplyPolicySucceed event on service", func() {
+				framework.WaitEventFitWith(kubeClient, serviceNamespace, serviceName,
+					func(event corev1.Event) bool {
+						return event.Reason == events.EventReasonApplyPolicySucceed
+					})
+			})
+
+			ginkgo.By("checking ScheduleBindingSucceed event on service", func() {
+				framework.WaitEventFitWith(kubeClient, serviceNamespace, serviceName,
+					func(event corev1.Event) bool {
+						return event.Reason == events.EventReasonScheduleBindingSucceed
+					})
+			})
+
+			ginkgo.By("checking SyncWorkSucceed event on service", func() {
+				framework.WaitEventFitWith(kubeClient, serviceNamespace, serviceName,
+					func(event corev1.Event) bool {
+						return event.Reason == events.EventReasonSyncWorkSucceed
+					})
+			})
+
 			framework.WaitServicePresentOnClustersFitWith(framework.ClusterNames(), service.Namespace, service.Name,
 				func(*corev1.Service) bool {
 					return true
 				})
 
-			patch := []map[string]interface{}{{"op": "replace", "path": "/spec/ports/0/port", "value": updateServicePort}}
+			ginkgo.By("checking AggregateStatusSucceed event on service binding", func() {
+				bindingName := names.GenerateBindingName(service.Kind, service.Name)
+				framework.WaitEventFitWith(kubeClient, serviceNamespace, bindingName,
+					func(event corev1.Event) bool {
+						return event.Reason == events.EventReasonAggregateStatusSucceed
+					})
+			})
+
+			ginkgo.By("checking InterpretHealthSucceed event on work object", func() {
+				workName := names.GenerateWorkName(service.Kind, service.Name, service.Namespace)
+				esName := names.GenerateExecutionSpaceName(framework.ClusterNames()[0])
+				framework.WaitEventFitWith(kubeClient, esName, workName,
+					func(event corev1.Event) bool {
+						return event.Reason == events.EventReasonInterpretHealthSucceed
+					})
+			})
+
+			patch := []map[string]any{{"op": "replace", "path": "/spec/ports/0/port", "value": updateServicePort}}
 			framework.UpdateServiceWithPatch(kubeClient, service.Namespace, service.Name, patch, types.JSONPatchType)
 
 			framework.WaitServicePresentOnClustersFitWith(framework.ClusterNames(), service.Namespace, service.Name,
@@ -204,7 +310,7 @@ var _ = ginkgo.Describe("[BasicCase] PropagationPolicy testing", func() {
 					return true
 				})
 
-			patch := []map[string]interface{}{{"op": "replace", "path": "/spec/containers/0/image", "value": updatePodImage}}
+			patch := []map[string]any{{"op": "replace", "path": "/spec/containers/0/image", "value": updatePodImage}}
 			framework.UpdatePodWithPatch(kubeClient, pod.Namespace, pod.Name, patch, types.JSONPatchType)
 
 			framework.WaitPodPresentOnClustersFitWith(framework.ClusterNames(), pod.Namespace, pod.Name,
@@ -304,7 +410,7 @@ var _ = ginkgo.Describe("[BasicCase] PropagationPolicy testing", func() {
 			})
 
 			ginkgo.By("updating cr", func() {
-				patch := []map[string]interface{}{
+				patch := []map[string]any{
 					{
 						"op":    "replace",
 						"path":  "/spec/resource/namespace",
@@ -405,12 +511,47 @@ var _ = ginkgo.Describe("[BasicCase] PropagationPolicy testing", func() {
 		})
 
 		ginkgo.It("job propagation testing", func() {
+			ginkgo.By("checking ApplyPolicySucceed event on job", func() {
+				framework.WaitEventFitWith(kubeClient, jobNamespace, jobName,
+					func(event corev1.Event) bool {
+						return event.Reason == events.EventReasonApplyPolicySucceed
+					})
+			})
+
+			ginkgo.By("checking GetReplicasSucceed event on job", func() {
+				framework.WaitEventFitWith(kubeClient, jobNamespace, jobName,
+					func(event corev1.Event) bool {
+						return event.Reason == events.EventReasonGetReplicasSucceed
+					})
+			})
+
+			ginkgo.By("checking ScheduleBindingSucceed event on job", func() {
+				framework.WaitEventFitWith(kubeClient, jobNamespace, jobName,
+					func(event corev1.Event) bool {
+						return event.Reason == events.EventReasonScheduleBindingSucceed
+					})
+			})
+
+			ginkgo.By("checking SyncWorkSucceed event on job", func() {
+				framework.WaitEventFitWith(kubeClient, jobNamespace, jobName,
+					func(event corev1.Event) bool {
+						return event.Reason == events.EventReasonSyncWorkSucceed
+					})
+			})
+
 			framework.WaitJobPresentOnClustersFitWith(framework.ClusterNames(), job.Namespace, job.Name,
 				func(*batchv1.Job) bool {
 					return true
 				})
 
-			patch := []map[string]interface{}{{"op": "replace", "path": "/spec/backoffLimit", "value": ptr.To[int32](updateBackoffLimit)}}
+			ginkgo.By("checking AggregateStatusSucceed event on job", func() {
+				framework.WaitEventFitWith(kubeClient, jobNamespace, jobName,
+					func(event corev1.Event) bool {
+						return event.Reason == events.EventReasonAggregateStatusSucceed
+					})
+			})
+
+			patch := []map[string]any{{"op": "replace", "path": "/spec/backoffLimit", "value": ptr.To[int32](updateBackoffLimit)}}
 			bytes, err := json.Marshal(patch)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 			framework.UpdateJobWithPatchBytes(kubeClient, job.Namespace, job.Name, bytes, types.JSONPatchType)
@@ -957,7 +1098,7 @@ var _ = ginkgo.Describe("[AdvancedCase] PropagationPolicy testing", func() {
 		})
 
 		ginkgo.It("update policy propagateDeps", func() {
-			patch := []map[string]interface{}{
+			patch := []map[string]any{
 				{
 					"op":    "replace",
 					"path":  "/spec/propagateDeps",
@@ -987,7 +1128,7 @@ var _ = ginkgo.Describe("[AdvancedCase] PropagationPolicy testing", func() {
 				ClusterAffinity: &policyv1alpha1.ClusterAffinity{
 					ClusterNames: []string{updatedMember},
 				}}
-			patch := []map[string]interface{}{
+			patch := []map[string]any{
 				{
 					"op":    "replace",
 					"path":  "/spec/placement",
@@ -1161,7 +1302,7 @@ var _ = ginkgo.Describe("[AdvancedCase] PropagationPolicy testing", func() {
 	})
 })
 
-var _ = ginkgo.Describe("[Suspension] PropagationPolicy testing", func() {
+var _ = ginkgo.Describe("Suspension: PropagationPolicy testing", func() {
 	var policy *policyv1alpha1.PropagationPolicy
 	var deployment *appsv1.Deployment
 	var targetMember string
@@ -1190,6 +1331,12 @@ var _ = ginkgo.Describe("[Suspension] PropagationPolicy testing", func() {
 			func(*appsv1.Deployment) bool {
 				return true
 			})
+		ginkgo.By("update the pp suspension dispatching to true", func() {
+			policy.Spec.Suspension = &policyv1alpha1.Suspension{
+				Dispatching: new(true),
+			}
+			framework.UpdatePropagationPolicyWithSpec(karmadaClient, policy.Namespace, policy.Name, policy.Spec)
+		})
 		ginkgo.DeferCleanup(func() {
 			framework.RemovePropagationPolicy(karmadaClient, policy.Namespace, policy.Name)
 			framework.RemoveDeployment(kubeClient, deployment.Namespace, deployment.Name)
@@ -1197,13 +1344,6 @@ var _ = ginkgo.Describe("[Suspension] PropagationPolicy testing", func() {
 	})
 
 	ginkgo.It("suspend the PP dispatching", func() {
-		ginkgo.By("update the pp suspension dispatching to true", func() {
-			policy.Spec.Suspension = &policyv1alpha1.Suspension{
-				Dispatching: ptr.To(true),
-			}
-			framework.UpdatePropagationPolicyWithSpec(karmadaClient, policy.Namespace, policy.Name, policy.Spec)
-		})
-
 		ginkgo.By("check RB suspension spec", func() {
 			framework.WaitResourceBindingFitWith(karmadaClient, deployment.Namespace, names.GenerateBindingName(deployment.Kind, deployment.Name),
 				func(binding *workv1alpha2.ResourceBinding) bool {
@@ -1246,13 +1386,31 @@ var _ = ginkgo.Describe("[Suspension] PropagationPolicy testing", func() {
 		})
 	})
 
-	ginkgo.It("suspension resume", func() {
+	ginkgo.It("suspension resume by setting policy suspension to a empty structure", func() {
 		ginkgo.By("update deployment replicas", func() {
 			framework.UpdateDeploymentReplicas(kubeClient, deployment, updateDeploymentReplicas)
 		})
 
 		ginkgo.By("resume the propagationPolicy", func() {
 			policy.Spec.Suspension = &policyv1alpha1.Suspension{}
+			framework.UpdatePropagationPolicyWithSpec(karmadaClient, policy.Namespace, policy.Name, policy.Spec)
+		})
+
+		ginkgo.By("check deployment replicas", func() {
+			framework.WaitDeploymentPresentOnClusterFitWith(targetMember, deployment.Namespace, deployment.Name,
+				func(d *appsv1.Deployment) bool {
+					return *d.Spec.Replicas == updateDeploymentReplicas
+				})
+		})
+	})
+
+	ginkgo.It("suspension resume by setting policy suspension to nil", func() {
+		ginkgo.By("update deployment replicas", func() {
+			framework.UpdateDeploymentReplicas(kubeClient, deployment, updateDeploymentReplicas)
+		})
+
+		ginkgo.By("resume the propagationPolicy", func() {
+			policy.Spec.Suspension = nil
 			framework.UpdatePropagationPolicyWithSpec(karmadaClient, policy.Namespace, policy.Name, policy.Spec)
 		})
 

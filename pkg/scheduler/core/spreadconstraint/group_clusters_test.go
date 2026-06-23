@@ -51,6 +51,7 @@ func Test_GroupClustersWithScore(t *testing.T) {
 		clustersScore framework.ClusterScoreList
 		placement     *policyv1alpha1.Placement
 		spec          *workv1alpha2.ResourceBindingSpec
+		status        *workv1alpha2.ResourceBindingStatus
 	}
 	type want struct {
 		clusters    []string
@@ -70,6 +71,7 @@ func Test_GroupClustersWithScore(t *testing.T) {
 				clustersScore: generateClusterScore(),
 				placement:     &policyv1alpha1.Placement{},
 				spec:          &workv1alpha2.ResourceBindingSpec{},
+				status:        &workv1alpha2.ResourceBindingStatus{},
 			},
 			want: want{
 				clusters: []string{"member4", "member2", "member3", "member1"},
@@ -88,7 +90,8 @@ func Test_GroupClustersWithScore(t *testing.T) {
 						},
 					},
 				},
-				spec: &workv1alpha2.ResourceBindingSpec{},
+				spec:   &workv1alpha2.ResourceBindingSpec{},
+				status: &workv1alpha2.ResourceBindingStatus{},
 			},
 			want: want{
 				clusters: []string{"member4", "member2", "member3", "member1"},
@@ -107,7 +110,8 @@ func Test_GroupClustersWithScore(t *testing.T) {
 						},
 					},
 				},
-				spec: &workv1alpha2.ResourceBindingSpec{},
+				spec:   &workv1alpha2.ResourceBindingSpec{},
+				status: &workv1alpha2.ResourceBindingStatus{},
 			},
 			want: want{
 				clusters: []string{"member4", "member2", "member3", "member1"},
@@ -127,7 +131,8 @@ func Test_GroupClustersWithScore(t *testing.T) {
 						},
 					},
 				},
-				spec: &workv1alpha2.ResourceBindingSpec{},
+				spec:   &workv1alpha2.ResourceBindingSpec{},
+				status: &workv1alpha2.ResourceBindingStatus{},
 			},
 			want: want{
 				clusters:  []string{"member4", "member2", "member3", "member1"},
@@ -147,7 +152,8 @@ func Test_GroupClustersWithScore(t *testing.T) {
 						},
 					},
 				},
-				spec: &workv1alpha2.ResourceBindingSpec{},
+				spec:   &workv1alpha2.ResourceBindingSpec{},
+				status: &workv1alpha2.ResourceBindingStatus{},
 			},
 			want: want{
 				clusters:    []string{"member4", "member2", "member3", "member1"},
@@ -177,7 +183,8 @@ func Test_GroupClustersWithScore(t *testing.T) {
 						},
 					},
 				},
-				spec: &workv1alpha2.ResourceBindingSpec{},
+				spec:   &workv1alpha2.ResourceBindingSpec{},
+				status: &workv1alpha2.ResourceBindingStatus{},
 			},
 			want: want{
 				clusters:    []string{"member4", "member2", "member3", "member1"},
@@ -201,7 +208,8 @@ func Test_GroupClustersWithScore(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			groupInfo := GroupClustersWithScore(tt.args.clustersScore, tt.args.placement, tt.args.spec, calAvailableReplicasFunc)
+			tt.args.spec.Placement = tt.args.placement
+			groupInfo := GroupClustersWithScore(tt.args.clustersScore, tt.args.placement, tt.args.spec, tt.args.status, calAvailableReplicasFunc)
 			for i, cluster := range groupInfo.Clusters {
 				if cluster.Name != tt.want.clusters[i] {
 					t.Errorf("test %s : the clusters aren't sorted", tt.name)
@@ -280,7 +288,7 @@ func generateRbSpec(replica int32) RbSpecMap {
 
 func generateClusterScores(n int, scores []int64, replicas []int64) []ClusterDetailInfo {
 	info := make([]ClusterDetailInfo, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		info[i] = ClusterDetailInfo{
 			Name:              fmt.Sprintf("member%d", i+1),
 			Score:             scores[i],
@@ -374,6 +382,41 @@ func Test_CalcGroupScore(t *testing.T) {
 			t.Logf("test ID: %v, score1 = %v, score2 = %v, score1 >= score 2 res: %v, the description => %v", tt.id, score1, score2, score1 > score2, tt.description)
 			if tt.group1Wins != (score1 >= score2) {
 				t.Errorf("test ID: %v, score1 = %v, score2 = %v, score1 >= score 2 want %v, but res is %v", tt.id, score1, score2, tt.group1Wins, score1 > score2)
+			}
+		})
+	}
+}
+
+func Test_CalcGroupScoreForDuplicate(t *testing.T) {
+	tests := []struct {
+		name     string
+		clusters []ClusterDetailInfo
+		rbSpec   *workv1alpha2.ResourceBindingSpec
+		watScore int64
+	}{
+		{
+			name:     "get 0 score when clusters is empty",
+			clusters: []ClusterDetailInfo{},
+			rbSpec:   &workv1alpha2.ResourceBindingSpec{Replicas: 10},
+			watScore: 0,
+		},
+		{
+			name: "get 0 score when all clusters can not meet the replica requirements",
+			clusters: []ClusterDetailInfo{
+				{Name: "member1", Score: 50, AvailableReplicas: 5},
+				{Name: "member2", Score: 50, AvailableReplicas: 5},
+			},
+			rbSpec:   &workv1alpha2.ResourceBindingSpec{Replicas: 10},
+			watScore: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			groupClustersInfo := &GroupClustersInfo{}
+			score := groupClustersInfo.calcGroupScoreForDuplicate(tt.clusters, tt.rbSpec)
+			if score != tt.watScore {
+				t.Errorf("calcGroupScoreForDuplicate: want score %v, but got %v", tt.watScore, score)
 			}
 		})
 	}

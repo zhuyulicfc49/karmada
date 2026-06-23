@@ -62,6 +62,7 @@ import (
 	"github.com/karmada-io/karmada/pkg/util/grpcconnection"
 	"github.com/karmada-io/karmada/pkg/util/helper"
 	utilmetrics "github.com/karmada-io/karmada/pkg/util/metrics"
+	"github.com/karmada-io/karmada/pkg/util/names"
 )
 
 // ScheduleType defines the schedule type of a binding object should be performed.
@@ -236,10 +237,12 @@ func WithRateLimiterOptions(rateLimiterOptions ratelimiterflag.Options) Option {
 // NewScheduler instantiates a scheduler
 func NewScheduler(dynamicClient dynamic.Interface, karmadaClient karmadaclientset.Interface, kubeClient kubernetes.Interface, opts ...Option) (*Scheduler, error) {
 	factory := informerfactory.NewSharedInformerFactory(karmadaClient, 0)
-	bindingLister := factory.Work().V1alpha2().ResourceBindings().Lister()
+
+	bindingInformer := factory.Work().V1alpha2().ResourceBindings()
+	bindingLister := bindingInformer.Lister()
 	clusterBindingLister := factory.Work().V1alpha2().ClusterResourceBindings().Lister()
 	clusterLister := factory.Cluster().V1alpha1().Clusters().Lister()
-	schedulerCache := schedulercache.NewCache(clusterLister)
+	schedulerCache := schedulercache.NewCache(clusterLister, bindingInformer.Informer().GetIndexer(), schedulercache.DefaultAssumptionTTL)
 
 	options := schedulerOptions{}
 	for _, opt := range opts {
@@ -300,6 +303,7 @@ func NewScheduler(dynamicClient dynamic.Interface, karmadaClient karmadaclientse
 	sched.enableEmptyWorkloadPropagation = options.enableEmptyWorkloadPropagation
 	sched.schedulerName = options.schedulerName
 
+	sched.addIndexers()
 	sched.addAllEventHandlers()
 	return sched, nil
 }
@@ -321,6 +325,21 @@ func (s *Scheduler) Run(ctx context.Context) {
 	s.clusterReconcileWorker.Run(ctx, 1)
 
 	go wait.Until(s.worker, time.Second, ctx.Done())
+
+	// Defensive check: schedulerCache is expected to be always initialized.
+	if s.schedulerCache != nil && s.schedulerCache.AssigningResourceBindings() != nil &&
+		features.FeatureGate.Enabled(features.SchedulingOvercommitProtection) {
+		assumptionCache := s.schedulerCache.AssigningResourceBindings()
+		// Periodically clean up stale assumptions in the cache to prevent memory leaks.
+		// This serves as a safety net for assumptions whose normal release path (e.g., Healthy signal)
+		// was never triggered.
+		go wait.Until(func() {
+			removed := assumptionCache.GC()
+			if removed > 0 {
+				klog.V(4).Infof("Assumption cache GC: removed %d expired entries", removed)
+			}
+		}, time.Minute, ctx.Done())
+	}
 
 	if features.FeatureGate.Enabled(features.PriorityBasedScheduling) {
 		s.priorityQueue.Run()
@@ -420,7 +439,7 @@ func (s *Scheduler) doScheduleBinding(namespace, name string) (err error) {
 		metrics.BindingSchedule(string(ReconcileSchedule), utilmetrics.DurationInSeconds(start), err)
 		return err
 	}
-	if rb.Spec.Replicas == 0 ||
+	if !rb.Spec.IsWorkload() ||
 		rb.Spec.Placement.ReplicaSchedulingType() == policyv1alpha1.ReplicaSchedulingTypeDuplicated {
 		// Duplicated resources should always be scheduled. Note: non-workload is considered as duplicated
 		// even if scheduling type is divided.
@@ -496,7 +515,7 @@ func (s *Scheduler) doScheduleClusterBinding(name string) (err error) {
 		metrics.BindingSchedule(string(ReconcileSchedule), utilmetrics.DurationInSeconds(start), err)
 		return err
 	}
-	if crb.Spec.Replicas == 0 ||
+	if !crb.Spec.IsWorkload() ||
 		crb.Spec.Placement.ReplicaSchedulingType() == policyv1alpha1.ReplicaSchedulingTypeDuplicated {
 		// Duplicated resources should always be scheduled. Note: non-workload is considered as duplicated
 		// even if scheduling type is divided.
@@ -569,13 +588,13 @@ func (s *Scheduler) scheduleResourceBinding(rb *workv1alpha2.ResourceBinding) (e
 }
 
 func (s *Scheduler) scheduleResourceBindingWithClusterAffinity(rb *workv1alpha2.ResourceBinding) error {
-	klog.V(4).InfoS("Begin scheduling resource binding with ClusterAffinity", "resourceBinding", klog.KObj(rb))
-	defer klog.V(4).InfoS("End scheduling resource binding with ClusterAffinity", "resourceBinding", klog.KObj(rb))
+	klog.V(4).InfoS("Begin scheduling ResourceBinding with ClusterAffinity", "ResourceBinding", klog.KObj(rb))
+	defer klog.V(4).InfoS("End scheduling ResourceBinding with ClusterAffinity", "ResourceBinding", klog.KObj(rb))
 
 	placementBytes, err := json.Marshal(*rb.Spec.Placement)
 	if err != nil {
-		klog.V(4).ErrorS(err, "Failed to marshal binding placement", "resourceBinding", klog.KObj(rb))
-		return err
+		klog.ErrorS(err, "Failed to marshal placement", "ResourceBinding", klog.KObj(rb))
+		return fmt.Errorf("failed to marshal placement of ResourceBinding %s: %w", rb.GetName(), err)
 	}
 
 	scheduleResult, err := s.Algorithm.Schedule(context.TODO(), &rb.Spec, &rb.Status, &core.ScheduleAlgorithmOption{EnableEmptyWorkloadPropagation: s.enableEmptyWorkloadPropagation})
@@ -597,13 +616,13 @@ func (s *Scheduler) scheduleResourceBindingWithClusterAffinity(rb *workv1alpha2.
 }
 
 func (s *Scheduler) scheduleResourceBindingWithClusterAffinities(rb *workv1alpha2.ResourceBinding) error {
-	klog.V(4).InfoS("Begin scheduling resourceBinding with ClusterAffinities", "resourceBinding", klog.KObj(rb))
-	defer klog.V(4).InfoS("End scheduling resourceBinding with ClusterAffinities", "resourceBinding", klog.KObj(rb))
+	klog.V(4).InfoS("Begin scheduling ResourceBinding with ClusterAffinities", "ResourceBinding", klog.KObj(rb))
+	defer klog.V(4).InfoS("End scheduling ResourceBinding with ClusterAffinities", "ResourceBinding", klog.KObj(rb))
 
 	placementBytes, err := json.Marshal(*rb.Spec.Placement)
 	if err != nil {
-		klog.V(4).ErrorS(err, "Failed to marshal binding placement", "resourceBinding", klog.KObj(rb))
-		return err
+		klog.ErrorS(err, "Failed to marshal placement", "ResourceBinding", klog.KObj(rb))
+		return fmt.Errorf("failed to marshal placement of ResourceBinding %s: %w", rb.GetName(), err)
 	}
 
 	var (
@@ -626,7 +645,7 @@ func (s *Scheduler) scheduleResourceBindingWithClusterAffinities(rb *workv1alpha
 			firstErr = err
 		}
 
-		err = fmt.Errorf("failed to schedule ResourceBinding(%s/%s) with clusterAffiliates index(%d): %v", rb.Namespace, rb.Name, affinityIndex, err)
+		err = fmt.Errorf("failed to schedule ResourceBinding(%s/%s) with clusterAffiliates index(%d): %w", rb.Namespace, rb.Name, affinityIndex, err)
 		klog.Error(err)
 		s.recordScheduleResultEventForResourceBinding(rb, nil, err)
 		affinityIndex++
@@ -657,7 +676,7 @@ func (s *Scheduler) scheduleResourceBindingWithClusterAffinities(rb *workv1alpha
 	patchErr := s.patchScheduleResultForResourceBinding(rb, string(placementBytes), scheduleResult.SuggestedClusters)
 	patchStatusErr := patchBindingStatusWithAffinityName(s.KarmadaClient, rb, updatedStatus.SchedulerObservedAffinityName)
 	scheduleErr := utilerrors.NewAggregate([]error{patchErr, patchStatusErr})
-	s.recordScheduleResultEventForResourceBinding(rb, nil, scheduleErr)
+	s.recordScheduleResultEventForResourceBinding(rb, scheduleResult.SuggestedClusters, scheduleErr)
 	return scheduleErr
 }
 
@@ -677,14 +696,100 @@ func (s *Scheduler) patchScheduleResultForResourceBinding(oldBinding *workv1alph
 		return nil
 	}
 
-	_, err = s.KarmadaClient.WorkV1alpha2().ResourceBindings(newBinding.Namespace).Patch(context.TODO(), newBinding.Name, types.MergePatchType, patchBytes, metav1.PatchOptions{})
+	result, err := s.KarmadaClient.WorkV1alpha2().ResourceBindings(newBinding.Namespace).Patch(context.TODO(), newBinding.Name, types.MergePatchType, patchBytes, metav1.PatchOptions{})
 	if err != nil {
 		klog.Errorf("Failed to patch schedule to ResourceBinding(%s/%s): %v", oldBinding.Namespace, oldBinding.Name, err)
 		return err
 	}
+	if features.FeatureGate.Enabled(features.WorkloadAffinity) {
+		// TODO(@zhzhuang-zju): Consider race condition where Informer's event for 'result' arrives before this Add call,
+		// leading to a potential memory leak in AssigningResourceBindings cache if no further updates occur.
+		s.schedulerCache.AssigningResourceBindings().Add(result)
+	}
+	if features.FeatureGate.Enabled(features.SchedulingOvercommitProtection) {
+		s.updateAssumptionsCache(oldBinding, scheduleResult)
+	}
 
 	klog.V(4).Infof("Patch schedule to ResourceBinding(%s/%s) succeed", oldBinding.Namespace, oldBinding.Name)
 	return nil
+}
+
+// updateAssumptionsCache maintains the assumption cache after the schedule result is
+// successfully patched to the API server (e.g. on first scheduling or after a scale event).
+//
+// Both single-template and multi-template workloads record the full current resource
+// footprint for every cluster in the new schedule result.
+//
+// Assumptions for clusters removed from the placement are released.
+// Non-workload resources (e.g. ConfigMap, Service) are skipped.
+func (s *Scheduler) updateAssumptionsCache(oldBinding *workv1alpha2.ResourceBinding, scheduleResult []workv1alpha2.TargetCluster) {
+	// can not reach here
+	if s.schedulerCache == nil || s.schedulerCache.AssigningResourceBindings() == nil {
+		return
+	}
+
+	// Skip non-workload resources.
+	if !oldBinding.Spec.IsWorkload() {
+		return
+	}
+
+	bindingKey := names.NamespacedKey(oldBinding.Namespace, oldBinding.Name)
+	assigningCache := s.schedulerCache.AssigningResourceBindings()
+
+	oldClusters := make(map[string]struct{}, len(oldBinding.Spec.Clusters))
+	for _, tc := range oldBinding.Spec.Clusters {
+		oldClusters[tc.Name] = struct{}{}
+	}
+
+	newClusters := make(map[string]struct{}, len(scheduleResult))
+	for _, tc := range scheduleResult {
+		newClusters[tc.Name] = struct{}{}
+	}
+
+	// Release assumptions for clusters removed from the placement.
+	for clusterName := range oldClusters {
+		if _, stillExists := newClusters[clusterName]; !stillExists {
+			assigningCache.ReleaseClusterAssumption(bindingKey, clusterName)
+		}
+	}
+
+	if len(oldBinding.Spec.Components) > 0 {
+		for clusterName := range newClusters {
+			assigningCache.Assume(bindingKey, clusterName, schedulercache.AssumedWorkload{
+				Namespace:  oldBinding.Spec.Resource.Namespace,
+				Components: oldBinding.Spec.Components,
+			})
+		}
+		return
+	}
+
+	// Single-template workload: each cluster has its own replica count; wrap into a
+	// synthetic Component so the estimator can deduct the correct resource footprint.
+	reqs := oldBinding.Spec.ReplicaRequirements
+	for _, tc := range scheduleResult {
+		components := singleTemplateAsComponents(oldBinding.Spec.Resource.Name, tc.Replicas, reqs)
+		assigningCache.Assume(bindingKey, tc.Name, schedulercache.AssumedWorkload{
+			Namespace:  oldBinding.Spec.Resource.Namespace,
+			Components: components,
+		})
+	}
+}
+
+// singleTemplateAsComponents wraps a single-template workload assignment into a Component slice
+// so it can be stored and consumed by the estimator in the same way as multi-template workloads.
+func singleTemplateAsComponents(name string, replicas int32, reqs *workv1alpha2.ReplicaRequirements) []workv1alpha2.Component {
+	c := workv1alpha2.Component{
+		Name:     name,
+		Replicas: replicas,
+	}
+	if reqs != nil {
+		c.ReplicaRequirements = &workv1alpha2.ComponentReplicaRequirements{
+			NodeClaim:         reqs.NodeClaim,
+			ResourceRequest:   reqs.ResourceRequest,
+			PriorityClassName: reqs.PriorityClassName,
+		}
+	}
+	return []workv1alpha2.Component{c}
 }
 
 func (s *Scheduler) scheduleClusterResourceBinding(crb *workv1alpha2.ClusterResourceBinding) (err error) {
@@ -707,13 +812,13 @@ func (s *Scheduler) scheduleClusterResourceBinding(crb *workv1alpha2.ClusterReso
 }
 
 func (s *Scheduler) scheduleClusterResourceBindingWithClusterAffinity(crb *workv1alpha2.ClusterResourceBinding) error {
-	klog.V(4).InfoS("Begin scheduling clusterResourceBinding with ClusterAffinity", "clusterResourceBinding", klog.KObj(crb))
-	defer klog.V(4).InfoS("End scheduling clusterResourceBinding with ClusterAffinity", "clusterResourceBinding", klog.KObj(crb))
+	klog.V(4).InfoS("Begin scheduling ClusterResourceBinding with ClusterAffinity", "ClusterResourceBinding", klog.KObj(crb))
+	defer klog.V(4).InfoS("End scheduling ClusterResourceBinding with ClusterAffinity", "ClusterResourceBinding", klog.KObj(crb))
 
 	placementBytes, err := json.Marshal(*crb.Spec.Placement)
 	if err != nil {
-		klog.V(4).ErrorS(err, "Failed to marshal binding placement", "clusterResourceBinding", klog.KObj(crb))
-		return err
+		klog.ErrorS(err, "Failed to marshal placement", "ClusterResourceBinding", klog.KObj(crb))
+		return fmt.Errorf("failed to marshal placement of ClusterResourceBinding %s: %w", crb.GetName(), err)
 	}
 
 	scheduleResult, err := s.Algorithm.Schedule(context.TODO(), &crb.Spec, &crb.Status, &core.ScheduleAlgorithmOption{EnableEmptyWorkloadPropagation: s.enableEmptyWorkloadPropagation})
@@ -735,13 +840,13 @@ func (s *Scheduler) scheduleClusterResourceBindingWithClusterAffinity(crb *workv
 }
 
 func (s *Scheduler) scheduleClusterResourceBindingWithClusterAffinities(crb *workv1alpha2.ClusterResourceBinding) error {
-	klog.V(4).InfoS("Begin scheduling clusterResourceBinding with ClusterAffinities", "clusterResourceBinding", klog.KObj(crb))
-	defer klog.V(4).InfoS("End scheduling clusterResourceBinding with ClusterAffinities", "clusterResourceBinding", klog.KObj(crb))
+	klog.V(4).InfoS("Begin scheduling ClusterResourceBinding with ClusterAffinities", "ClusterResourceBinding", klog.KObj(crb))
+	defer klog.V(4).InfoS("End scheduling ClusterResourceBinding with ClusterAffinities", "ClusterResourceBinding", klog.KObj(crb))
 
 	placementBytes, err := json.Marshal(*crb.Spec.Placement)
 	if err != nil {
-		klog.V(4).ErrorS(err, "Failed to marshal binding placement", "clusterResourceBinding", klog.KObj(crb))
-		return err
+		klog.ErrorS(err, "Failed to marshal placement", "ClusterResourceBinding", klog.KObj(crb))
+		return fmt.Errorf("failed to marshal placement of ClusterResourceBinding %s: %w", crb.GetName(), err)
 	}
 
 	var (
@@ -764,7 +869,7 @@ func (s *Scheduler) scheduleClusterResourceBindingWithClusterAffinities(crb *wor
 			firstErr = err
 		}
 
-		err = fmt.Errorf("failed to schedule ClusterResourceBinding(%s) with clusterAffiliates index(%d): %v", crb.Name, affinityIndex, err)
+		err = fmt.Errorf("failed to schedule ClusterResourceBinding(%s) with clusterAffiliates index(%d): %w", crb.Name, affinityIndex, err)
 		klog.Error(err)
 		s.recordScheduleResultEventForClusterResourceBinding(crb, nil, err)
 		affinityIndex++
@@ -795,7 +900,7 @@ func (s *Scheduler) scheduleClusterResourceBindingWithClusterAffinities(crb *wor
 	patchErr := s.patchScheduleResultForClusterResourceBinding(crb, string(placementBytes), scheduleResult.SuggestedClusters)
 	patchStatusErr := patchClusterBindingStatusWithAffinityName(s.KarmadaClient, crb, updatedStatus.SchedulerObservedAffinityName)
 	scheduleErr := utilerrors.NewAggregate([]error{patchErr, patchStatusErr})
-	s.recordScheduleResultEventForClusterResourceBinding(crb, nil, scheduleErr)
+	s.recordScheduleResultEventForClusterResourceBinding(crb, scheduleResult.SuggestedClusters, scheduleErr)
 	return scheduleErr
 }
 
@@ -840,7 +945,7 @@ func (s *Scheduler) handleErr(err error, bindingInfo *internalqueue.QueuedBindin
 	metrics.CountSchedulerBindings(metrics.ScheduleAttemptFailure)
 }
 
-func (s *Scheduler) legacyHandleErr(err error, key interface{}) {
+func (s *Scheduler) legacyHandleErr(err error, key any) {
 	if err == nil || apierrors.HasStatusCause(err, corev1.NamespaceTerminatingCause) {
 		s.queue.Forget(key)
 		return

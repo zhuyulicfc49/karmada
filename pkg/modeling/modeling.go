@@ -59,7 +59,7 @@ type resourceModels struct {
 
 // ClusterResourceNode represents the each raw resource entity without modeling.
 type ClusterResourceNode struct {
-	// quantity is the the number of this node
+	// quantity is the number of this node
 	// Only when the resourceLists are exactly the same can they be counted as the same node.
 	// +required
 	quantity int
@@ -145,7 +145,7 @@ func searchLastLessElement(nums []resource.Quantity, target resource.Quantity) i
 }
 
 // clusterResourceNodeComparator provides a fast comparison on clusterResourceNodes
-func (rs *ResourceSummary) clusterResourceNodeComparator(a, b interface{}) int {
+func (rs *ResourceSummary) clusterResourceNodeComparator(a, b any) int {
 	s1 := a.(ClusterResourceNode)
 	s2 := b.(ClusterResourceNode)
 	for index := 0; index < len(rs.modelSortingResourceNames); index++ {

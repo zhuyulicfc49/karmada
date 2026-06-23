@@ -36,7 +36,7 @@ import (
 )
 
 func TestAggregateDeploymentStatus(t *testing.T) {
-	statusMap := map[string]interface{}{
+	statusMap := map[string]any{
 		"replicas":            1,
 		"readyReplicas":       1,
 		"updatedReplicas":     1,
@@ -92,13 +92,13 @@ func TestAggregateDeploymentStatus(t *testing.T) {
 }
 
 func TestAggregateServiceStatus(t *testing.T) {
-	statusMapNotLB := map[string]interface{}{}
+	statusMapNotLB := map[string]any{}
 	rawNotLB, _ := helper.BuildStatusRawExtension(statusMapNotLB)
 	aggregatedStatusItemsNotLB := []workv1alpha2.AggregatedStatusItem{
 		{ClusterName: "member1", Status: rawNotLB, Applied: true},
 	}
 
-	statusMapLB := map[string]interface{}{
+	statusMapLB := map[string]any{
 		"loadBalancer": corev1.LoadBalancerStatus{Ingress: []corev1.LoadBalancerIngress{{IP: "8.8.8.8"}}},
 	}
 	rawLB, _ := helper.BuildStatusRawExtension(statusMapLB)
@@ -179,7 +179,7 @@ func TestAggregateServiceStatus(t *testing.T) {
 }
 
 func TestAggregateIngressStatus(t *testing.T) {
-	statusMap := map[string]interface{}{
+	statusMap := map[string]any{
 		"loadBalancer": corev1.LoadBalancerStatus{Ingress: []corev1.LoadBalancerIngress{{IP: "8.8.8.8"}}},
 	}
 	raw, _ := helper.BuildStatusRawExtension(statusMap)
@@ -226,13 +226,16 @@ func TestAggregateIngressStatus(t *testing.T) {
 func TestAggregateJobStatus(t *testing.T) {
 	startTime := metav1.Now()
 	completionTime := startTime
-	statusMap := map[string]interface{}{
+	statusMap := map[string]any{
 		"active":         0,
 		"succeeded":      1,
 		"failed":         0,
 		"startTime":      startTime,
 		"completionTime": completionTime,
-		"conditions":     []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}},
+		"conditions": []batchv1.JobCondition{
+			{Type: batchv1.JobComplete, Status: corev1.ConditionTrue},
+			{Type: batchv1.JobSuccessCriteriaMet, Status: corev1.ConditionTrue},
+		},
 	}
 	raw, _ := helper.BuildStatusRawExtension(statusMap)
 	aggregatedStatusItems := []workv1alpha2.AggregatedStatusItem{
@@ -240,7 +243,7 @@ func TestAggregateJobStatus(t *testing.T) {
 		{ClusterName: "member2", Status: raw, Applied: true},
 	}
 
-	statusMapWithJobfailed := map[string]interface{}{
+	statusMapWithJobfailed := map[string]any{
 		"active":         0,
 		"succeeded":      0,
 		"failed":         1,
@@ -259,7 +262,7 @@ func TestAggregateJobStatus(t *testing.T) {
 	}
 	newJob := &batchv1.Job{
 		TypeMeta: metav1.TypeMeta{Kind: "Job", APIVersion: batchv1.SchemeGroupVersion.String()},
-		Status:   batchv1.JobStatus{Active: 0, Succeeded: 2, Failed: 0, StartTime: &startTime, CompletionTime: &completionTime, Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue, Reason: "Completed", Message: "Job completed"}}},
+		Status:   batchv1.JobStatus{Active: 0, Succeeded: 2, Failed: 0, StartTime: &startTime, CompletionTime: &completionTime, Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue, Reason: "Completed", Message: "Job completed"}, {Type: batchv1.JobSuccessCriteriaMet, Status: corev1.ConditionTrue, Reason: "CompletionsReached", Message: "All member clusters have met success criteria"}}},
 	}
 	oldObj, _ := helper.ToUnstructured(oldJob)
 	newObj, _ := helper.ToUnstructured(newJob)
@@ -297,15 +300,17 @@ func TestAggregateJobStatus(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		actualObj, _ := aggregateJobStatus(tt.curObj, tt.aggregatedStatusItems)
-		// Clean condition time before compare, due to issue: https://github.com/karmada-io/karmada/issues/1767
-		actualObj = cleanUnstructuredJobConditionTime(actualObj)
-		assert.Equal(t, tt.expectedObj, actualObj)
+		t.Run(tt.name, func(t *testing.T) {
+			actualObj, _ := aggregateJobStatus(tt.curObj, tt.aggregatedStatusItems)
+			// Clean condition time before compare, due to issue: https://github.com/karmada-io/karmada/issues/1767
+			actualObj = cleanUnstructuredJobConditionTime(actualObj)
+			assert.Equal(t, tt.expectedObj, actualObj)
+		})
 	}
 }
 
 func TestAggregateDaemonSetStatus(t *testing.T) {
-	statusMap := map[string]interface{}{
+	statusMap := map[string]any{
 		"currentNumberScheduled": 1,
 		"numberMisscheduled":     0,
 		"desiredNumberScheduled": 1,
@@ -357,7 +362,7 @@ func TestAggregateDaemonSetStatus(t *testing.T) {
 }
 
 func TestAggregateStatefulSetStatus(t *testing.T) {
-	statusMap := map[string]interface{}{
+	statusMap := map[string]any{
 		"replicas":          1,
 		"readyReplicas":     1,
 		"currentReplicas":   1,
@@ -506,7 +511,7 @@ func TestAggregatePodStatus(t *testing.T) {
 			InitContainerStatuses: newInitContainerStatuses1,
 			Phase:                 corev1.PodPending,
 		}})
-	initContainerStatusMap1 := map[string]interface{}{
+	initContainerStatusMap1 := map[string]any{
 		"initContainerStatuses": []corev1.ContainerStatus{newInitContainerStatuses1[0], newInitContainerStatuses1[1]},
 		"phase":                 corev1.PodPending,
 	}
@@ -531,12 +536,12 @@ func TestAggregatePodStatus(t *testing.T) {
 			Phase:             corev1.PodRunning,
 		}})
 
-	statusMap1 := map[string]interface{}{
+	statusMap1 := map[string]any{
 		"containerStatuses": []corev1.ContainerStatus{containerStatuses1[0]},
 		"phase":             corev1.PodRunning,
 	}
 	raw1, _ := helper.BuildStatusRawExtension(statusMap1)
-	statusMap2 := map[string]interface{}{
+	statusMap2 := map[string]any{
 		"containerStatuses": []corev1.ContainerStatus{containerStatuses1[1]},
 		"phase":             corev1.PodRunning,
 	}
@@ -581,12 +586,12 @@ func TestAggregatePodStatus(t *testing.T) {
 		},
 	}
 
-	statusMap3 := map[string]interface{}{
+	statusMap3 := map[string]any{
 		"containerStatuses": []corev1.ContainerStatus{containerStatuses2[0]},
 		"phase":             corev1.PodRunning,
 	}
 	raw3, _ := helper.BuildStatusRawExtension(statusMap3)
-	statusMap4 := map[string]interface{}{
+	statusMap4 := map[string]any{
 		"containerStatuses": []corev1.ContainerStatus{containerStatuses2[1]},
 		"phase":             corev1.PodPending,
 	}
@@ -648,15 +653,15 @@ func TestAggregatePodStatus(t *testing.T) {
 			State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}},
 		},
 	}
-	statusMapRunning := map[string]interface{}{
+	statusMapRunning := map[string]any{
 		"containerStatuses": []corev1.ContainerStatus{containerStatusesRunning[0]},
 		"phase":             corev1.PodRunning,
 	}
-	statusMapFailed := map[string]interface{}{
+	statusMapFailed := map[string]any{
 		"containerStatuses": []corev1.ContainerStatus{newContainerStatusesFail[0]},
 		"phase":             corev1.PodFailed,
 	}
-	statusMapSucceeded := map[string]interface{}{
+	statusMapSucceeded := map[string]any{
 		"containerStatuses": []corev1.ContainerStatus{newContainerStatusesSucceeded[0]},
 		"phase":             corev1.PodSucceeded,
 	}
@@ -769,7 +774,7 @@ func TestAggregatePodStatus(t *testing.T) {
 }
 
 func TestAggregatePVCStatus(t *testing.T) {
-	statusBoundMap := map[string]interface{}{
+	statusBoundMap := map[string]any{
 		"phase": corev1.ClaimBound,
 	}
 	// Bound status
@@ -782,7 +787,7 @@ func TestAggregatePVCStatus(t *testing.T) {
 	}
 
 	// Lost status
-	statusLostMap := map[string]interface{}{
+	statusLostMap := map[string]any{
 		"phase": corev1.ClaimLost,
 	}
 	lostRaw1, _ := helper.BuildStatusRawExtension(statusBoundMap)
@@ -794,7 +799,7 @@ func TestAggregatePVCStatus(t *testing.T) {
 	}
 
 	// Pending status
-	statusPendingMap := map[string]interface{}{
+	statusPendingMap := map[string]any{
 		"phase": corev1.ClaimPending,
 	}
 	pendingRaw1, _ := helper.BuildStatusRawExtension(statusBoundMap)
@@ -867,7 +872,7 @@ func TestAggregatePVCStatus(t *testing.T) {
 }
 
 func TestAggregatePVStatus(t *testing.T) {
-	statusAvailableMap := map[string]interface{}{
+	statusAvailableMap := map[string]any{
 		"phase": corev1.VolumeAvailable,
 	}
 	// Available status
@@ -879,7 +884,7 @@ func TestAggregatePVStatus(t *testing.T) {
 		{ClusterName: "member2", Status: availableRaw2, Applied: true},
 	}
 
-	statusReleasedMap := map[string]interface{}{
+	statusReleasedMap := map[string]any{
 		"phase": corev1.VolumeReleased,
 	}
 	// Release status
@@ -891,7 +896,7 @@ func TestAggregatePVStatus(t *testing.T) {
 		{ClusterName: "member2", Status: releasedRaw2, Applied: true},
 	}
 
-	statusBoundMap := map[string]interface{}{
+	statusBoundMap := map[string]any{
 		"phase": corev1.VolumeBound,
 	}
 	// Bound status
@@ -904,7 +909,7 @@ func TestAggregatePVStatus(t *testing.T) {
 	}
 
 	// Failed status
-	statusFailedMap := map[string]interface{}{
+	statusFailedMap := map[string]any{
 		"phase": corev1.VolumeFailed,
 	}
 	failedRaw1, _ := helper.BuildStatusRawExtension(releasedRaw1)
@@ -916,7 +921,7 @@ func TestAggregatePVStatus(t *testing.T) {
 	}
 
 	// Pending status
-	statusPendingMap := map[string]interface{}{
+	statusPendingMap := map[string]any{
 		"phase": corev1.VolumePending,
 	}
 	pendingRaw1, _ := helper.BuildStatusRawExtension(statusAvailableMap)
@@ -1039,7 +1044,7 @@ func TestAggregatedPodDisruptionBudgetStatus(t *testing.T) {
 		},
 	})
 
-	healthyStatusRaw, _ := helper.BuildStatusRawExtension(map[string]interface{}{
+	healthyStatusRaw, _ := helper.BuildStatusRawExtension(map[string]any{
 		"currentHealthy":     1,
 		"desiredHealthy":     1,
 		"disruptionsAllowed": 1,
@@ -1048,7 +1053,7 @@ func TestAggregatedPodDisruptionBudgetStatus(t *testing.T) {
 
 	evictionTime := metav1.Now()
 
-	unHealthyStatusRaw, _ := helper.BuildStatusRawExtension(map[string]interface{}{
+	unHealthyStatusRaw, _ := helper.BuildStatusRawExtension(map[string]any{
 		"currentHealthy":     0,
 		"desiredHealthy":     1,
 		"disruptionsAllowed": 0,
@@ -1130,7 +1135,7 @@ func Test_aggregateCronJobStatus(t *testing.T) {
 		},
 	})
 
-	cronjobStatusRaw1, _ := helper.BuildStatusRawExtension(map[string]interface{}{
+	cronjobStatusRaw1, _ := helper.BuildStatusRawExtension(map[string]any{
 		"active": []corev1.ObjectReference{
 			{
 				APIVersion:      "batch/v1",
@@ -1144,7 +1149,7 @@ func Test_aggregateCronJobStatus(t *testing.T) {
 		"lastScheduleTime":   "2023-02-08T07:16:00Z",
 		"lastSuccessfulTime": nil,
 	})
-	cronjobStatusRaw2, _ := helper.BuildStatusRawExtension(map[string]interface{}{
+	cronjobStatusRaw2, _ := helper.BuildStatusRawExtension(map[string]any{
 		"active": []corev1.ObjectReference{
 			{
 				APIVersion:      "batch/v1",
@@ -1224,11 +1229,11 @@ func Test_aggregateHorizontalPodAutoscalerStatus(t *testing.T) {
 			DesiredReplicas: 0,
 		},
 	})
-	aggregatedStatusItem1, _ := helper.BuildStatusRawExtension(map[string]interface{}{
+	aggregatedStatusItem1, _ := helper.BuildStatusRawExtension(map[string]any{
 		"currentReplicas": 2,
 		"desiredReplicas": 2,
 	})
-	aggregatedStatusItem2, _ := helper.BuildStatusRawExtension(map[string]interface{}{
+	aggregatedStatusItem2, _ := helper.BuildStatusRawExtension(map[string]any{
 		"currentReplicas": 4,
 		"desiredReplicas": 4,
 	})
@@ -1294,6 +1299,7 @@ func Test_aggregateHorizontalPodAutoscalerStatus(t *testing.T) {
 func Test_getAllDefaultAggregateStatusInterpreter(t *testing.T) {
 	expectedKinds := []schema.GroupVersionKind{
 		{Group: "apps", Version: "v1", Kind: "Deployment"},
+		{Group: "apps", Version: "v1", Kind: "ReplicaSet"},
 		{Group: "apps", Version: "v1", Kind: "StatefulSet"},
 		{Group: "batch", Version: "v1", Kind: "Job"},
 		{Group: "", Version: "v1", Kind: "Pod"},

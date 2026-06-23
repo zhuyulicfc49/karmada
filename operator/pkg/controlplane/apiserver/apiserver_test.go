@@ -18,13 +18,13 @@ package apiserver
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	fakeclientset "k8s.io/client-go/kubernetes/fake"
 	coretesting "k8s.io/client-go/testing"
-	"k8s.io/utils/ptr"
 
 	operatorv1alpha1 "github.com/karmada-io/karmada/operator/pkg/apis/operator/v1alpha1"
 	"github.com/karmada-io/karmada/operator/pkg/constants"
@@ -45,13 +45,13 @@ func TestEnsureKarmadaAPIServer(t *testing.T) {
 		KarmadaAPIServer: &operatorv1alpha1.KarmadaAPIServer{
 			CommonSettings: operatorv1alpha1.CommonSettings{
 				Image:           operatorv1alpha1.Image{ImageTag: image},
-				Replicas:        ptr.To[int32](replicas),
+				Replicas:        new(replicas),
 				Annotations:     annotations,
 				Labels:          labels,
 				Resources:       corev1.ResourceRequirements{},
 				ImagePullPolicy: imagePullPolicy,
 			},
-			ServiceSubnet: ptr.To(serviceSubnet),
+			ServiceSubnet: new(serviceSubnet),
 			ExtraArgs:     map[string]string{"cmd1": "arg1", "cmd2": "arg2"},
 		},
 		Etcd: &operatorv1alpha1.Etcd{
@@ -59,7 +59,7 @@ func TestEnsureKarmadaAPIServer(t *testing.T) {
 		},
 	}
 
-	fakeClient := fakeclientset.NewSimpleClientset()
+	fakeClient := fakeclientset.NewClientset()
 
 	err := EnsureKarmadaAPIServer(fakeClient, cfg, name, namespace, map[string]bool{})
 	if err != nil {
@@ -67,8 +67,35 @@ func TestEnsureKarmadaAPIServer(t *testing.T) {
 	}
 
 	actions := fakeClient.Actions()
-	if len(actions) != 2 {
-		t.Fatalf("expected 2 actions, but got %d", len(actions))
+	// We now create deployment, service and PDB, so expect 3 actions
+	if len(actions) != 3 {
+		t.Fatalf("expected 3 actions, but got %d", len(actions))
+	}
+
+	// Check that we have deployment, service, and PDB
+	deploymentCount := 0
+	serviceCount := 0
+	pdbCount := 0
+	for _, action := range actions {
+		if action.GetResource().Resource == "deployments" {
+			deploymentCount++
+		} else if action.GetResource().Resource == "services" {
+			serviceCount++
+		} else if action.GetResource().Resource == "poddisruptionbudgets" {
+			pdbCount++
+		}
+	}
+
+	if deploymentCount != 1 {
+		t.Errorf("expected 1 deployment actions, but got %d", deploymentCount)
+	}
+
+	if serviceCount != 1 {
+		t.Errorf("expected 1 service action, but got %d", serviceCount)
+	}
+
+	if pdbCount != 1 {
+		t.Errorf("expected 1 PDB action, but got %d", pdbCount)
 	}
 }
 
@@ -85,7 +112,7 @@ func TestEnsureKarmadaAggregatedAPIServer(t *testing.T) {
 		KarmadaAggregatedAPIServer: &operatorv1alpha1.KarmadaAggregatedAPIServer{
 			CommonSettings: operatorv1alpha1.CommonSettings{
 				Image:           operatorv1alpha1.Image{ImageTag: image},
-				Replicas:        ptr.To[int32](replicas),
+				Replicas:        new(replicas),
 				Annotations:     annotationValues,
 				Labels:          labelValues,
 				Resources:       corev1.ResourceRequirements{},
@@ -100,7 +127,7 @@ func TestEnsureKarmadaAggregatedAPIServer(t *testing.T) {
 
 	featureGates := map[string]bool{"FeatureA": true}
 
-	fakeClient := fakeclientset.NewSimpleClientset()
+	fakeClient := fakeclientset.NewClientset()
 
 	err := EnsureKarmadaAggregatedAPIServer(fakeClient, cfg, name, namespace, featureGates)
 	if err != nil {
@@ -108,8 +135,35 @@ func TestEnsureKarmadaAggregatedAPIServer(t *testing.T) {
 	}
 
 	actions := fakeClient.Actions()
-	if len(actions) != 2 {
-		t.Fatalf("expected 2 actions, but got %d", len(actions))
+	// We now create deployment, service and PDB, so expect 3 actions
+	if len(actions) != 3 {
+		t.Fatalf("expected 3 actions, but got %d", len(actions))
+	}
+
+	// Check that we have deployment, service, and PDB
+	deploymentCount := 0
+	serviceCount := 0
+	pdbCount := 0
+	for _, action := range actions {
+		if action.GetResource().Resource == "deployments" {
+			deploymentCount++
+		} else if action.GetResource().Resource == "services" {
+			serviceCount++
+		} else if action.GetResource().Resource == "poddisruptionbudgets" {
+			pdbCount++
+		}
+	}
+
+	if deploymentCount != 1 {
+		t.Errorf("expected 1 deployment actions, but got %d", deploymentCount)
+	}
+
+	if serviceCount != 1 {
+		t.Errorf("expected 1 service action, but got %d", serviceCount)
+	}
+
+	if pdbCount != 1 {
+		t.Errorf("expected 1 PDB action, but got %d", pdbCount)
 	}
 }
 
@@ -125,20 +179,20 @@ func TestInstallKarmadaAPIServer(t *testing.T) {
 	priorityClassName := "system-cluster-critical"
 
 	// Create fake clientset.
-	fakeClient := fakeclientset.NewSimpleClientset()
+	fakeClient := fakeclientset.NewClientset()
 
 	// Define a valid KarmadaAPIServer configuration.
 	cfg := &operatorv1alpha1.KarmadaAPIServer{
 		CommonSettings: operatorv1alpha1.CommonSettings{
 			Image:             operatorv1alpha1.Image{ImageTag: image},
-			Replicas:          ptr.To[int32](replicas),
+			Replicas:          new(replicas),
 			Annotations:       annotations,
 			Labels:            labels,
 			Resources:         corev1.ResourceRequirements{},
 			ImagePullPolicy:   imagePullPolicy,
 			PriorityClassName: priorityClassName,
 		},
-		ServiceSubnet: ptr.To(serviceSubnet),
+		ServiceSubnet: new(serviceSubnet),
 		ExtraArgs:     map[string]string{"cmd1": "arg1", "cmd2": "arg2"},
 	}
 	etcdCfg := &operatorv1alpha1.Etcd{
@@ -152,9 +206,14 @@ func TestInstallKarmadaAPIServer(t *testing.T) {
 		t.Fatalf("expected no error, but got: %v", err)
 	}
 
-	deployment, err := verifyDeploymentCreation(fakeClient, &replicas, imagePullPolicy, cfg.ExtraArgs, name, namespace, image, util.KarmadaAPIServerName(name), priorityClassName)
+	deployment, err := verifyDeploymentCreation(fakeClient)
 	if err != nil {
-		t.Fatalf("failed to verify karmada apiserver correct deployment creation correct details: %v", err)
+		t.Fatalf("failed to verify karmada apiserver deployment creation: %v", err)
+	}
+
+	// Verify deployment details using the existing function
+	if err := verifyDeploymentDetails(deployment, &replicas, imagePullPolicy, cfg.ExtraArgs, name, namespace, image, util.KarmadaAPIServerName(name), priorityClassName); err != nil {
+		t.Fatalf("failed to verify deployment details: %v", err)
 	}
 
 	err = verifyAPIServerDeploymentAdditionalDetails(deployment, name, serviceSubnet)
@@ -165,7 +224,7 @@ func TestInstallKarmadaAPIServer(t *testing.T) {
 
 func TestCreateKarmadaAPIServerService(t *testing.T) {
 	// Initialize fake clientset.
-	client := fakeclientset.NewSimpleClientset()
+	client := fakeclientset.NewClientset()
 
 	// Define inputs.
 	name := "test-apiserver"
@@ -223,13 +282,13 @@ func TestInstallKarmadaAggregatedAPIServer(t *testing.T) {
 	priorityClassName := "system-cluster-critical"
 
 	// Use fake clientset.
-	fakeClient := fakeclientset.NewSimpleClientset()
+	fakeClient := fakeclientset.NewClientset()
 
 	// Define valid inputs.
 	cfg := &operatorv1alpha1.KarmadaAggregatedAPIServer{
 		CommonSettings: operatorv1alpha1.CommonSettings{
 			Image:             operatorv1alpha1.Image{ImageTag: image},
-			Replicas:          ptr.To[int32](replicas),
+			Replicas:          new(replicas),
 			Annotations:       annotationValues,
 			Labels:            labelValues,
 			Resources:         corev1.ResourceRequirements{},
@@ -248,9 +307,9 @@ func TestInstallKarmadaAggregatedAPIServer(t *testing.T) {
 		t.Fatalf("Failed to install Karmada Aggregated API Server: %v", err)
 	}
 
-	deployment, err := verifyDeploymentCreation(fakeClient, &replicas, imagePullPolicy, cfg.ExtraArgs, name, namespace, image, util.KarmadaAggregatedAPIServerName(name), priorityClassName)
+	deployment, err := verifyDeploymentCreation(fakeClient)
 	if err != nil {
-		t.Fatalf("failed to verify karmada aggregated apiserver deployment creation correct details: %v", err)
+		t.Fatalf("failed to verify karmada aggregated apiserver deployment creation: %v", err)
 	}
 
 	err = verifyAggregatedAPIServerDeploymentAdditionalDetails(featureGates, deployment, name)
@@ -259,9 +318,91 @@ func TestInstallKarmadaAggregatedAPIServer(t *testing.T) {
 	}
 }
 
+func TestInstallKarmadaAggregatedAPIServerWithTolerationsAndAffinity(t *testing.T) {
+	var replicas int32 = 2
+	image := "karmada-aggregated-apiserver-image"
+	imagePullPolicy := corev1.PullIfNotPresent
+	name := "test-agg-server"
+	namespace := "test-namespace"
+
+	tolerations := []corev1.Toleration{
+		{
+			Key:      "node-role.kubernetes.io/master",
+			Operator: corev1.TolerationOpExists,
+			Effect:   corev1.TaintEffectNoSchedule,
+		},
+	}
+	affinity := &corev1.Affinity{
+		NodeAffinity: &corev1.NodeAffinity{
+			RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+				NodeSelectorTerms: []corev1.NodeSelectorTerm{
+					{
+						MatchExpressions: []corev1.NodeSelectorRequirement{
+							{
+								Key:      "kubernetes.io/os",
+								Operator: corev1.NodeSelectorOpIn,
+								Values:   []string{"linux"},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := &operatorv1alpha1.KarmadaAggregatedAPIServer{
+		CommonSettings: operatorv1alpha1.CommonSettings{
+			Image:           operatorv1alpha1.Image{ImageTag: image},
+			Replicas:        new(replicas),
+			Resources:       corev1.ResourceRequirements{},
+			ImagePullPolicy: imagePullPolicy,
+			Tolerations:     tolerations,
+			Affinity:        affinity,
+		},
+		ExtraArgs: map[string]string{},
+	}
+
+	fakeClient := fakeclientset.NewClientset()
+	etcdCfg := &operatorv1alpha1.Etcd{
+		Local: &operatorv1alpha1.LocalEtcd{},
+	}
+
+	err := installKarmadaAggregatedAPIServer(fakeClient, cfg, etcdCfg, name, namespace, map[string]bool{})
+	if err != nil {
+		t.Fatalf("failed to install karmada aggregated apiserver: %v", err)
+	}
+
+	deployment, err := verifyDeploymentCreation(fakeClient)
+	if err != nil {
+		t.Fatalf("failed to verify deployment creation: %v", err)
+	}
+
+	if len(deployment.Spec.Template.Spec.Tolerations) != 1 {
+		t.Fatalf("expected 1 toleration, but got %d", len(deployment.Spec.Template.Spec.Tolerations))
+	}
+	if deployment.Spec.Template.Spec.Tolerations[0].Key != "node-role.kubernetes.io/master" {
+		t.Errorf("expected toleration key 'node-role.kubernetes.io/master', but got '%s'", deployment.Spec.Template.Spec.Tolerations[0].Key)
+	}
+
+	if deployment.Spec.Template.Spec.Affinity == nil {
+		t.Fatal("expected affinity to be set, but it was nil")
+	}
+	nodeAffinity := deployment.Spec.Template.Spec.Affinity.NodeAffinity
+	if nodeAffinity == nil || nodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
+		t.Fatal("expected node affinity with required scheduling terms, but it was nil")
+	}
+	terms := nodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms
+	if len(terms) != 1 {
+		t.Fatalf("expected 1 node selector term, but got %d", len(terms))
+	}
+	if terms[0].MatchExpressions[0].Key != "kubernetes.io/os" {
+		t.Errorf("expected match expression key 'kubernetes.io/os', but got '%s'", terms[0].MatchExpressions[0].Key)
+	}
+}
+
 func TestCreateKarmadaAggregatedAPIServerService(t *testing.T) {
 	// Initialize fake clientset.
-	client := fakeclientset.NewSimpleClientset()
+	client := fakeclientset.NewClientset()
 
 	// Define inputs.
 	name := "test-agg-server"
@@ -301,42 +442,37 @@ func TestCreateKarmadaAggregatedAPIServerService(t *testing.T) {
 	}
 }
 
-// contains check if a slice contains a specific string.
-func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
-}
-
 // verifyDeploymentCreation verifies the creation of a Kubernetes deployment
 // based on the given parameters. It ensures that the deployment has the correct
 // number of replicas, image pull policy, extra arguments, and labels, as well
 // as the correct image for the Karmada API server.
-func verifyDeploymentCreation(client *fakeclientset.Clientset, replicas *int32, imagePullPolicy corev1.PullPolicy, extraArgs map[string]string, name, namespace, image, expectedDeploymentName, priorityClassName string) (*appsv1.Deployment, error) {
-	// Assert that a Deployment was created.
+func verifyDeploymentCreation(client *fakeclientset.Clientset) (*appsv1.Deployment, error) {
+	// Assert that a Deployment and PDB were created.
 	actions := client.Actions()
-	if len(actions) != 1 {
-		return nil, fmt.Errorf("expected exactly 1 action either create or update, but got %d actions", len(actions))
+	// We now create deployment and PDB, so expect 2 actions
+	if len(actions) != 2 {
+		return nil, fmt.Errorf("expected exactly 2 actions (deployment + PDB), but got %d actions", len(actions))
 	}
 
-	// Check that the action was a Deployment creation.
-	createAction, ok := actions[0].(coretesting.CreateAction)
-	if !ok {
-		return nil, fmt.Errorf("expected a CreateAction, but got %T", actions[0])
+	// Find the deployment action
+	var deployment *appsv1.Deployment
+	for _, action := range actions {
+		if action.GetResource().Resource == "deployments" {
+			createAction, isCreate := action.(coretesting.CreateAction)
+			_, isGet := action.(coretesting.GetAction)
+			if !isCreate && !isGet {
+				return nil, fmt.Errorf("expected a GetAction or CreateAction for deployment, but got %T", action)
+			}
+			if isGet {
+				continue
+			}
+			deployment = createAction.GetObject().(*appsv1.Deployment)
+			break
+		}
 	}
 
-	// Check that the action was performed on the correct resource.
-	if createAction.GetResource().Resource != "deployments" {
-		return nil, fmt.Errorf("expected action on 'deployments', but got '%s'", createAction.GetResource().Resource)
-	}
-
-	deployment := createAction.GetObject().(*appsv1.Deployment)
-	err := verifyDeploymentDetails(deployment, replicas, imagePullPolicy, extraArgs, name, namespace, image, expectedDeploymentName, priorityClassName)
-	if err != nil {
-		return nil, err
+	if deployment == nil {
+		return nil, fmt.Errorf("expected deployment action, but none found")
 	}
 
 	return deployment, nil
@@ -388,14 +524,14 @@ func verifyDeploymentDetails(deployment *appsv1.Deployment, replicas *int32, ima
 
 	for key, value := range extraArgs {
 		expectedArg := fmt.Sprintf("--%s=%s", key, value)
-		if !contains(container.Command, expectedArg) {
+		if !slices.Contains(container.Command, expectedArg) {
 			return fmt.Errorf("expected container commands to include '%s', but it was missing", expectedArg)
 		}
 	}
 
 	etcdServersArg := fmt.Sprintf("https://%s.%s.svc.cluster.local:%d,", util.KarmadaEtcdClientName(name), namespace, constants.EtcdListenClientPort)
 	etcdServersArg = fmt.Sprintf("--etcd-servers=%s", etcdServersArg[:len(etcdServersArg)-1])
-	if !contains(container.Command, etcdServersArg) {
+	if !slices.Contains(container.Command, etcdServersArg) {
 		return fmt.Errorf("etcd servers argument '%s' not found in container command", etcdServersArg)
 	}
 
@@ -411,7 +547,7 @@ func verifyAggregatedAPIServerDeploymentAdditionalDetails(featureGates map[strin
 		featureGatesArg += fmt.Sprintf("%s=%t,", key, value)
 	}
 	featureGatesArg = fmt.Sprintf("--feature-gates=%s", featureGatesArg[:len(featureGatesArg)-1])
-	if !contains(deployment.Spec.Template.Spec.Containers[0].Command, featureGatesArg) {
+	if !slices.Contains(deployment.Spec.Template.Spec.Containers[0].Command, featureGatesArg) {
 		return fmt.Errorf("expected container commands to include '%s', but it was missing", featureGatesArg)
 	}
 
@@ -425,7 +561,7 @@ func verifyAggregatedAPIServerDeploymentAdditionalDetails(featureGates map[strin
 	}
 	expectedSecrets := []string{util.ComponentKarmadaConfigSecretName(util.KarmadaAggregatedAPIServerName(expectedDeploymentName)), util.KarmadaCertSecretName(expectedDeploymentName), util.EtcdCertSecretName(expectedDeploymentName)}
 	for _, expectedSecret := range expectedSecrets {
-		if !contains(extractedSecrets, expectedSecret) {
+		if !slices.Contains(extractedSecrets, expectedSecret) {
 			return fmt.Errorf("expected secret '%s' not found in extracted secrets", expectedSecret)
 		}
 	}
@@ -439,7 +575,7 @@ func verifyAggregatedAPIServerDeploymentAdditionalDetails(featureGates map[strin
 // secret volumes are mounted in the deployment.
 func verifyAPIServerDeploymentAdditionalDetails(deployment *appsv1.Deployment, expectedDeploymentName, serviceSubnet string) error {
 	serviceClusterIPRangeArg := fmt.Sprintf("--service-cluster-ip-range=%s", serviceSubnet)
-	if !contains(deployment.Spec.Template.Spec.Containers[0].Command, serviceClusterIPRangeArg) {
+	if !slices.Contains(deployment.Spec.Template.Spec.Containers[0].Command, serviceClusterIPRangeArg) {
 		return fmt.Errorf("service cluster IP range argument '%s' not found in container command", serviceClusterIPRangeArg)
 	}
 
@@ -453,7 +589,7 @@ func verifyAPIServerDeploymentAdditionalDetails(deployment *appsv1.Deployment, e
 	}
 	expectedSecrets := []string{util.KarmadaCertSecretName(expectedDeploymentName), util.EtcdCertSecretName(expectedDeploymentName)}
 	for _, expectedSecret := range expectedSecrets {
-		if !contains(extractedSecrets, expectedSecret) {
+		if !slices.Contains(extractedSecrets, expectedSecret) {
 			return fmt.Errorf("expected secret '%s' not found in extracted secrets", expectedSecret)
 		}
 	}

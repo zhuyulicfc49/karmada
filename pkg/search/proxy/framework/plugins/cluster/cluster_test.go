@@ -507,10 +507,9 @@ func Test_clusterProxy_connect(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			kubeFactory := informers.NewSharedInformerFactory(fake.NewSimpleClientset(tt.fields.secrets...), 0)
-			karmadaFactory := karmadainformers.NewSharedInformerFactory(karmadafake.NewSimpleClientset(tt.fields.clusters...), 0)
+			ctx := t.Context()
+			kubeFactory := informers.NewSharedInformerFactory(fake.NewClientset(tt.fields.secrets...), 0)
+			karmadaFactory := karmadainformers.NewSharedInformerFactory(karmadafake.NewClientset(tt.fields.clusters...), 0)
 
 			c := &Cluster{
 				store:         tt.fields.store,

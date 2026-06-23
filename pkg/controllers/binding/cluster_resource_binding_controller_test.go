@@ -20,7 +20,9 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -39,6 +41,7 @@ import (
 	policyv1alpha1 "github.com/karmada-io/karmada/pkg/apis/policy/v1alpha1"
 	workv1alpha1 "github.com/karmada-io/karmada/pkg/apis/work/v1alpha1"
 	workv1alpha2 "github.com/karmada-io/karmada/pkg/apis/work/v1alpha2"
+	"github.com/karmada-io/karmada/pkg/events"
 	testing2 "github.com/karmada-io/karmada/pkg/search/proxy/testing"
 	"github.com/karmada-io/karmada/pkg/util"
 	"github.com/karmada-io/karmada/pkg/util/fedinformer/genericmanager"
@@ -256,6 +259,8 @@ func TestClusterResourceBindingController_removeFinalizer(t *testing.T) {
 }
 
 func TestClusterResourceBindingController_syncBinding(t *testing.T) {
+	const expectedSyncSucceedEventCount = 2 // syncBinding emits succeed events for binding and workload.
+
 	rs := workv1alpha2.ObjectReference{
 		APIVersion: "v1",
 		Kind:       "Namespace",
@@ -298,7 +303,41 @@ func TestClusterResourceBindingController_syncBinding(t *testing.T) {
 			if !reflect.DeepEqual(result, tt.want) {
 				t.Errorf("ClusterResourceBindingController.syncBinding() = %v, want %v", result, tt.want)
 			}
+
+			recorder, ok := c.EventRecorder.(*record.FakeRecorder)
+			if !ok {
+				t.Fatalf("event recorder type = %T, want *record.FakeRecorder", c.EventRecorder)
+			}
+
+			eventsFound := collectFakeEvents(recorder, time.Second)
+			if len(eventsFound) < expectedSyncSucceedEventCount {
+				t.Fatalf("expected at least %d events, got %d (%v)", expectedSyncSucceedEventCount, len(eventsFound), eventsFound)
+			}
+
+			succeedEvents := 0
+			for _, event := range eventsFound {
+				if strings.Contains(event, events.EventReasonSyncWorkSucceed) {
+					succeedEvents++
+				}
+			}
+			if succeedEvents < expectedSyncSucceedEventCount {
+				t.Fatalf("expected at least %d %q events, got %d (%v)", expectedSyncSucceedEventCount, events.EventReasonSyncWorkSucceed, succeedEvents, eventsFound)
+			}
 		})
+	}
+}
+
+func collectFakeEvents(recorder *record.FakeRecorder, timeout time.Duration) []string {
+	found := make([]string, 0)
+	deadline := time.After(timeout)
+
+	for {
+		select {
+		case e := <-recorder.Events:
+			found = append(found, e)
+		case <-deadline:
+			return found
+		}
 	}
 }
 

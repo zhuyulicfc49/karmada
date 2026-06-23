@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"reflect"
 	"strings"
@@ -40,6 +41,7 @@ import (
 	policyv1alpha1 "github.com/karmada-io/karmada/pkg/apis/policy/v1alpha1"
 	workv1alpha2 "github.com/karmada-io/karmada/pkg/apis/work/v1alpha2"
 	"github.com/karmada-io/karmada/pkg/features"
+	"github.com/karmada-io/karmada/pkg/util"
 )
 
 // testScheme is the scheme used for fake client in tests.
@@ -106,9 +108,24 @@ func WithReplicaRequirements(reqs corev1.ResourceList) RBOption {
 	}
 }
 
+func WithComponents(components []workv1alpha2.Component) RBOption {
+	return func(rb *workv1alpha2.ResourceBinding) {
+		rb.Spec.Components = components
+	}
+}
+
 func WithResourceRef(ref workv1alpha2.ObjectReference) RBOption {
 	return func(rb *workv1alpha2.ResourceBinding) {
 		rb.Spec.Resource = ref
+	}
+}
+
+func WithAnnotations(annotations map[string]string) RBOption {
+	return func(rb *workv1alpha2.ResourceBinding) {
+		if rb.Annotations == nil {
+			rb.Annotations = make(map[string]string)
+		}
+		maps.Copy(rb.Annotations, annotations)
 	}
 }
 
@@ -117,7 +134,7 @@ func makeTestRB(namespace, name string, opts ...RBOption) *workv1alpha2.Resource
 		APIVersion: "v1", Kind: "Pod", Name: "test-pod-" + name, Namespace: namespace,
 	}
 	rb := &workv1alpha2.ResourceBinding{
-		TypeMeta: metav1.TypeMeta{APIVersion: workv1alpha2.SchemeGroupVersion.String(), Kind: "ResourceBinding"},
+		TypeMeta: metav1.TypeMeta{APIVersion: workv1alpha2.GroupVersion.String(), Kind: "ResourceBinding"},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
@@ -152,7 +169,7 @@ func WithOverallUsed(used corev1.ResourceList) FRQOption {
 
 func makeTestFRQ(namespace, name string, opts ...FRQOption) *policyv1alpha1.FederatedResourceQuota {
 	frq := &policyv1alpha1.FederatedResourceQuota{
-		TypeMeta: metav1.TypeMeta{APIVersion: policyv1alpha1.SchemeGroupVersion.String(), Kind: "FederatedResourceQuota"},
+		TypeMeta: metav1.TypeMeta{APIVersion: policyv1alpha1.GroupVersion.String(), Kind: "FederatedResourceQuota"},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
@@ -166,8 +183,19 @@ func makeTestFRQ(namespace, name string, opts ...FRQOption) *policyv1alpha1.Fede
 	return frq
 }
 
-// boolPtr returns a pointer to a boolean value.
-func boolPtr(b bool) *bool { return &b }
+// quotaExceededResponse creates an admission response for quota exceeded errors.
+func quotaExceededResponse(message string) admission.Response {
+	return admission.Response{
+		AdmissionResponse: admissionv1.AdmissionResponse{
+			Allowed: false,
+			Result: &metav1.Status{
+				Message: message,
+				Reason:  util.QuotaExceededReason,
+				Code:    int32(http.StatusForbidden),
+			},
+		},
+	}
+}
 
 // --- Admission Request Builder ---
 type admissionRequestBuilder struct {
@@ -202,7 +230,7 @@ func (b *admissionRequestBuilder) WithOldObject(oldObj runtime.Object) *admissio
 }
 
 func (b *admissionRequestBuilder) WithDryRun(isDryRun bool) *admissionRequestBuilder {
-	b.dryRun = boolPtr(isDryRun)
+	b.dryRun = new(isDryRun)
 	return b
 }
 
@@ -329,41 +357,146 @@ func TestValidatingAdmission_Handle(t *testing.T) {
 		WithOverallUsed(corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("0m")}),
 	)
 
+	makeTestComponent := func(name string, replicas int32, cpu string) workv1alpha2.Component {
+		return workv1alpha2.Component{
+			Name:     name,
+			Replicas: replicas,
+			ReplicaRequirements: &workv1alpha2.ComponentReplicaRequirements{
+				ResourceRequest: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse(cpu)},
+			},
+		}
+	}
+	rbWithComponents := makeTestRB("quota-ns", "rb-with-components",
+		WithClusters([]workv1alpha2.TargetCluster{{Name: "m1"}, {Name: "m2"}}),
+		WithComponents([]workv1alpha2.Component{
+			makeTestComponent("comp1", 2, "25m"),
+			makeTestComponent("comp2", 1, "30m"),
+		}),
+	)
+	// For: "create with components and sufficient quota (allowed response)"
+	frqForComponentsSufficient := makeTestFRQ("quota-ns", "frq-components-sufficient",
+		WithOverallLimits(corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("200m")}),
+		WithOverallUsed(corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("0m")}),
+	)
+	// For: "create with components and exceeded quota (denied response)"
+	frqForComponentsExceeded := makeTestFRQ("quota-ns", "frq-components-exceeded",
+		WithOverallLimits(corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("150m")}),
+		WithOverallUsed(corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("0m")}),
+	)
+	// For: "update components passes quota (allowed response)"
+	rbComponentsPassOld := makeTestRB("quota-ns", "rb-components-pass",
+		WithClusters([]workv1alpha2.TargetCluster{{Name: "m1"}}),
+		WithComponents([]workv1alpha2.Component{
+			makeTestComponent("comp-old", 1, "50m"),
+		}),
+	)
+	rbComponentsPassNew := makeTestRB("quota-ns", "rb-components-pass",
+		WithClusters([]workv1alpha2.TargetCluster{{Name: "m1"}}),
+		WithComponents([]workv1alpha2.Component{
+			makeTestComponent("comp-new", 2, "40m"),
+		}),
+	)
+	frqForComponentsPass := makeTestFRQ("quota-ns", "frq-components-pass",
+		WithOverallLimits(corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("200m")}),
+		WithOverallUsed(corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m")}),
+	)
+
+	// For: "update components fails quota (denied response)"
+	rbComponentsFailOld := makeTestRB("quota-ns", "rb-components-fail",
+		WithClusters([]workv1alpha2.TargetCluster{{Name: "m1"}}),
+		WithComponents([]workv1alpha2.Component{
+			makeTestComponent("comp-old", 1, "50m"),
+		}),
+	)
+	rbComponentsFailNew := makeTestRB("quota-ns", "rb-components-fail",
+		WithClusters([]workv1alpha2.TargetCluster{{Name: "m1"}}),
+		WithComponents([]workv1alpha2.Component{
+			makeTestComponent("comp-new", 2, "80m"),
+		}),
+	)
+	frqForComponentsFail := makeTestFRQ("quota-ns", "frq-components-fail",
+		WithOverallLimits(corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m")}),
+		WithOverallUsed(corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("0m")}),
+	)
+
 	tests := []struct {
-		name               string
-		req                admission.Request
-		decoder            admission.Decoder
-		clientObjects      []client.Object
-		featureGateEnabled bool
-		wantResponse       admission.Response
+		name                                            string
+		req                                             admission.Request
+		decoder                                         admission.Decoder
+		clientObjects                                   []client.Object
+		enableFederatedQuotaEnforcementFeatureGate      bool
+		enableMultiplePodTemplatesSchedulingFeatureGate bool
+		wantResponse                                    admission.Response
 	}{
 		{
-			name:               "feature gate disabled",
-			req:                newAdmissionRequestBuilder(t, admissionv1.Create, "default", "any-rb", "fg-disabled").Build(),
-			decoder:            &fakeDecoder{},
-			clientObjects:      nil,
-			featureGateEnabled: false,
-			wantResponse:       admission.Allowed(""),
+			name:          "feature gate disabled",
+			req:           newAdmissionRequestBuilder(t, admissionv1.Create, "default", "any-rb", "fg-disabled").Build(),
+			decoder:       &fakeDecoder{},
+			clientObjects: nil,
+			enableFederatedQuotaEnforcementFeatureGate: false,
+			wantResponse: admission.Allowed(""),
 		},
 		{
 			name: "decode error on new object",
 			req: newAdmissionRequestBuilder(t, admissionv1.Create, rbForDecodeErrorCase.Namespace, rbForDecodeErrorCase.Name, "decode-err").
 				WithObject(rbForDecodeErrorCase).
 				Build(),
-			decoder:            &fakeDecoder{err: errors.New("decode failed")},
-			clientObjects:      []client.Object{frqForDecodeErrorCase},
-			featureGateEnabled: true,
-			wantResponse:       admission.Errored(http.StatusBadRequest, errors.New("decode failed")),
+			decoder:       &fakeDecoder{err: errors.New("decode failed")},
+			clientObjects: []client.Object{frqForDecodeErrorCase},
+			enableFederatedQuotaEnforcementFeatureGate: true,
+			wantResponse: admission.Errored(http.StatusBadRequest, errors.New("decode failed")),
+		},
+		{
+			name: "valid dependencies annotation should be allowed",
+			req: newAdmissionRequestBuilder(t, admissionv1.Create, "default", "rb-valid-deps", "valid-deps").
+				WithObject(makeTestRB("default", "rb-valid-deps",
+					WithAnnotations(map[string]string{
+						"resourcebinding.karmada.io/dependencies": `[{"apiVersion":"v1","kind":"ConfigMap","namespace":"default","name":"my-config"}]`,
+					}))).
+				Build(),
+			decoder: &fakeDecoder{decodeObj: makeTestRB("default", "rb-valid-deps",
+				WithAnnotations(map[string]string{
+					"resourcebinding.karmada.io/dependencies": `[{"apiVersion":"v1","kind":"ConfigMap","namespace":"default","name":"my-config"}]`,
+				}))},
+			clientObjects: nil,
+			enableFederatedQuotaEnforcementFeatureGate: false,
+			wantResponse: admission.Allowed(""),
+		},
+		{
+			name: "invalid dependencies annotation should be denied",
+			req: newAdmissionRequestBuilder(t, admissionv1.Create, "default", "rb-invalid-deps", "invalid-deps").
+				WithObject(makeTestRB("default", "rb-invalid-deps",
+					WithAnnotations(map[string]string{
+						"resourcebinding.karmada.io/dependencies": `invalid-json-string`,
+					}))).
+				Build(),
+			decoder: &fakeDecoder{decodeObj: makeTestRB("default", "rb-invalid-deps",
+				WithAnnotations(map[string]string{
+					"resourcebinding.karmada.io/dependencies": `invalid-json-string`,
+				}))},
+			clientObjects: nil,
+			enableFederatedQuotaEnforcementFeatureGate: false,
+			wantResponse: admission.Denied("metadata.annotations.resourcebinding.karmada.io/dependencies: Invalid value: \"invalid-json-string\": annotation value must be a valid JSON"),
+		},
+		{
+			name: "no dependencies annotation should be allowed",
+			req: newAdmissionRequestBuilder(t, admissionv1.Create, "default", "rb-no-deps", "no-deps").
+				WithObject(makeTestRB("default", "rb-no-deps")).
+				Build(),
+			decoder:       &fakeDecoder{decodeObj: makeTestRB("default", "rb-no-deps")},
+			clientObjects: nil,
+			enableFederatedQuotaEnforcementFeatureGate: false,
+			wantResponse: admission.Allowed(""),
 		},
 		{
 			name: "create operation not yet scheduled should be allowed",
 			req: newAdmissionRequestBuilder(t, admissionv1.Create, rbUnscheduledCreate.Namespace, rbUnscheduledCreate.Name, "create-unscheduled").
 				WithObject(rbUnscheduledCreate).
 				Build(),
-			decoder:            &fakeDecoder{decodeObj: rbUnscheduledCreate},
-			clientObjects:      []client.Object{frqForUnscheduledCreate},
-			featureGateEnabled: true,
-			wantResponse:       admission.Allowed("ResourceBinding not yet scheduled for Create operation."),
+			decoder:       &fakeDecoder{decodeObj: rbUnscheduledCreate},
+			clientObjects: []client.Object{frqForUnscheduledCreate},
+			enableFederatedQuotaEnforcementFeatureGate: true,
+			wantResponse: admission.Allowed(""),
 		},
 		{
 			name: "update operation with no relevant field change should be allowed",
@@ -371,10 +504,10 @@ func TestValidatingAdmission_Handle(t *testing.T) {
 				WithObject(rbForNoChange).
 				WithOldObject(rbForNoChange).
 				Build(),
-			decoder:            &fakeDecoder{decodeObj: rbForNoChange, rawDecodedObj: rbForNoChange},
-			clientObjects:      []client.Object{frqForNoChange},
-			featureGateEnabled: true,
-			wantResponse:       admission.Allowed("No quota relevant fields changed."),
+			decoder:       &fakeDecoder{decodeObj: rbForNoChange, rawDecodedObj: rbForNoChange},
+			clientObjects: []client.Object{frqForNoChange},
+			enableFederatedQuotaEnforcementFeatureGate: true,
+			wantResponse: admission.Allowed(""),
 		},
 		{
 			name: "total RB delta is zero should be allowed (update with identical states)",
@@ -382,33 +515,30 @@ func TestValidatingAdmission_Handle(t *testing.T) {
 				WithObject(rbForDeltaZeroNew).
 				WithOldObject(rbForDeltaZeroOld).
 				Build(),
-			decoder:            &fakeDecoder{decodeObj: rbForDeltaZeroNew, rawDecodedObj: rbForDeltaZeroOld},
-			clientObjects:      []client.Object{frqForDeltaZero},
-			featureGateEnabled: true,
-			wantResponse:       admission.Allowed("No effective resource quantity delta for ResourceBinding, skipping quota validation."),
+			decoder:       &fakeDecoder{decodeObj: rbForDeltaZeroNew, rawDecodedObj: rbForDeltaZeroOld},
+			clientObjects: []client.Object{frqForDeltaZero},
+			enableFederatedQuotaEnforcementFeatureGate: true,
+			wantResponse: admission.Allowed(""),
 		},
 		{
 			name: "no FRQs found should be allowed",
 			req: newAdmissionRequestBuilder(t, admissionv1.Create, rbForNoFRQ.Namespace, rbForNoFRQ.Name, "no-frq-found").
 				WithObject(rbForNoFRQ).
 				Build(),
-			decoder:            &fakeDecoder{decodeObj: rbForNoFRQ},
-			clientObjects:      []client.Object{},
-			featureGateEnabled: true,
-			wantResponse:       admission.Allowed("No FederatedResourceQuotas found in the namespace, skipping quota check."),
+			decoder:       &fakeDecoder{decodeObj: rbForNoFRQ},
+			clientObjects: []client.Object{},
+			enableFederatedQuotaEnforcementFeatureGate: true,
+			wantResponse: admission.Allowed(""),
 		},
 		{
 			name: "create quota exceeded should deny",
 			req: newAdmissionRequestBuilder(t, admissionv1.Create, rbCreateExceeds.Namespace, rbCreateExceeds.Name, "create-exceeds").
 				WithObject(rbCreateExceeds).
 				Build(),
-			decoder:            &fakeDecoder{decodeObj: rbCreateExceeds},
-			clientObjects:      []client.Object{frqForCreateExceeds},
-			featureGateEnabled: true,
-			wantResponse: admission.Denied(
-				fmt.Sprintf("Quota exceeded for FederatedResourceQuota %s/%s. ResourceBinding %s/%s will be denied.",
-					frqForCreateExceeds.Namespace, frqForCreateExceeds.Name, rbCreateExceeds.Namespace, rbCreateExceeds.Name),
-			),
+			decoder:       &fakeDecoder{decodeObj: rbCreateExceeds},
+			clientObjects: []client.Object{frqForCreateExceeds},
+			enableFederatedQuotaEnforcementFeatureGate: true,
+			wantResponse: quotaExceededResponse("FederatedResourceQuota(quota-ns/frq-create-exceeds) exceeded for resource cpu: requested sum 200m, limit 150m."),
 		},
 		{
 			name: "update passes quota (allowed response, non-dryrun)",
@@ -417,13 +547,10 @@ func TestValidatingAdmission_Handle(t *testing.T) {
 				WithOldObject(commonRBUpdatePassOld).
 				WithDryRun(false).
 				Build(),
-			decoder:            &fakeDecoder{decodeObj: commonRBUpdatePassNew, rawDecodedObj: commonRBUpdatePassOld},
-			clientObjects:      []client.Object{frqForUpdatePassNonDryRun},
-			featureGateEnabled: true,
-			wantResponse: admission.Allowed(
-				fmt.Sprintf("All relevant FederatedResourceQuota checks passed for ResourceBinding %s/%s. Quota check passed for FRQ %s/%s. 1 FRQ(s) updated.",
-					commonRBUpdatePassNew.Namespace, commonRBUpdatePassNew.Name, frqForUpdatePassNonDryRun.Namespace, frqForUpdatePassNonDryRun.Name),
-			),
+			decoder:       &fakeDecoder{decodeObj: commonRBUpdatePassNew, rawDecodedObj: commonRBUpdatePassOld},
+			clientObjects: []client.Object{frqForUpdatePassNonDryRun},
+			enableFederatedQuotaEnforcementFeatureGate: true,
+			wantResponse: admission.Allowed(""),
 		},
 		{
 			name: "update passes quota (allowed response, dry run)",
@@ -432,13 +559,10 @@ func TestValidatingAdmission_Handle(t *testing.T) {
 				WithOldObject(commonRBUpdatePassOld).
 				WithDryRun(true).
 				Build(),
-			decoder:            &fakeDecoder{decodeObj: commonRBUpdatePassNew, rawDecodedObj: commonRBUpdatePassOld},
-			clientObjects:      []client.Object{frqForUpdatePassDryRun},
-			featureGateEnabled: true,
-			wantResponse: admission.Allowed(
-				fmt.Sprintf("All relevant FederatedResourceQuota checks passed for ResourceBinding %s/%s. Quota check passed for FRQ %s/%s. 1 FRQ(s) updated.",
-					commonRBUpdatePassNew.Namespace, commonRBUpdatePassNew.Name, frqForUpdatePassDryRun.Namespace, frqForUpdatePassDryRun.Name),
-			),
+			decoder:       &fakeDecoder{decodeObj: commonRBUpdatePassNew, rawDecodedObj: commonRBUpdatePassOld},
+			clientObjects: []client.Object{frqForUpdatePassDryRun},
+			enableFederatedQuotaEnforcementFeatureGate: true,
+			wantResponse: admission.Allowed(""),
 		},
 		{
 			name: "update fails quota (denied response)",
@@ -446,26 +570,140 @@ func TestValidatingAdmission_Handle(t *testing.T) {
 				WithObject(rbUpdateFailNew).
 				WithOldObject(rbUpdateFailOld).
 				Build(),
-			decoder:            &fakeDecoder{decodeObj: rbUpdateFailNew, rawDecodedObj: rbUpdateFailOld},
-			clientObjects:      []client.Object{frqForUpdateFail},
-			featureGateEnabled: true,
-			wantResponse: admission.Denied(
-				fmt.Sprintf("Quota exceeded for FederatedResourceQuota %s/%s. ResourceBinding %s/%s will be denied.",
-					frqForUpdateFail.Namespace, frqForUpdateFail.Name, rbUpdateFailNew.Namespace, rbUpdateFailNew.Name),
-			),
+			decoder:       &fakeDecoder{decodeObj: rbUpdateFailNew, rawDecodedObj: rbUpdateFailOld},
+			clientObjects: []client.Object{frqForUpdateFail},
+			enableFederatedQuotaEnforcementFeatureGate: true,
+			wantResponse: quotaExceededResponse("FederatedResourceQuota(quota-ns/frq-update-fail) exceeded for resource cpu: requested sum 110m, limit 100m."),
+		},
+		{
+			name: "validateComponents: zero components (should allow)",
+			req: newAdmissionRequestBuilder(t, admissionv1.Create, "comp-ns", "rb-zero-components", "zero-comps").
+				WithObject(makeTestRB("comp-ns", "rb-zero-components", WithComponents(nil))).
+				Build(),
+			decoder:       &fakeDecoder{decodeObj: makeTestRB("comp-ns", "rb-zero-components", WithComponents(nil))},
+			clientObjects: nil,
+			enableFederatedQuotaEnforcementFeatureGate:      false,
+			enableMultiplePodTemplatesSchedulingFeatureGate: true,
+			wantResponse: admission.Allowed(""),
+		},
+		{
+			name: "validateComponents: one component without name (should deny)",
+			req: newAdmissionRequestBuilder(t, admissionv1.Create, "comp-ns", "rb-one-component-no-name", "one-comp-no-name").
+				WithObject(makeTestRB("comp-ns", "rb-one-component-no-name", WithComponents([]workv1alpha2.Component{{}}))).
+				Build(),
+			decoder:       &fakeDecoder{decodeObj: makeTestRB("comp-ns", "rb-one-component-no-name", WithComponents([]workv1alpha2.Component{{}}))},
+			clientObjects: nil,
+			enableFederatedQuotaEnforcementFeatureGate:      false,
+			enableMultiplePodTemplatesSchedulingFeatureGate: true,
+			wantResponse: admission.Denied("spec.components[0].name: Invalid value: \"\": component names must be non-empty"),
+		},
+		{
+			name: "validateComponents: one component with name (should allow)",
+			req: newAdmissionRequestBuilder(t, admissionv1.Create, "comp-ns", "rb-one-component-with-name", "one-comp-with-name").
+				WithObject(makeTestRB("comp-ns", "rb-one-component-with-name", WithComponents([]workv1alpha2.Component{
+					{Name: "foo"},
+				}))).
+				Build(),
+			decoder:       &fakeDecoder{decodeObj: makeTestRB("comp-ns", "rb-one-component-with-name", WithComponents([]workv1alpha2.Component{{Name: "foo"}}))},
+			clientObjects: nil,
+			enableFederatedQuotaEnforcementFeatureGate:      false,
+			enableMultiplePodTemplatesSchedulingFeatureGate: true,
+			wantResponse: admission.Allowed(""),
+		},
+		{
+			name: "validateComponents: multiple components with unique names (should allow)",
+			req: newAdmissionRequestBuilder(t, admissionv1.Create, "comp-ns", "rb-multi-unique", "multi-unique").
+				WithObject(makeTestRB("comp-ns", "rb-multi-unique", WithComponents([]workv1alpha2.Component{
+					{Name: "foo"}, {Name: "bar"},
+				}))).
+				Build(),
+			decoder:       &fakeDecoder{decodeObj: makeTestRB("comp-ns", "rb-multi-unique", WithComponents([]workv1alpha2.Component{{Name: "foo"}, {Name: "bar"}}))},
+			clientObjects: nil,
+			enableFederatedQuotaEnforcementFeatureGate:      false,
+			enableMultiplePodTemplatesSchedulingFeatureGate: true,
+			wantResponse: admission.Allowed(""),
+		},
+		{
+			name: "validateComponents: multiple components with empty name (should deny)",
+			req: newAdmissionRequestBuilder(t, admissionv1.Create, "comp-ns", "rb-multi-empty", "multi-empty").
+				WithObject(makeTestRB("comp-ns", "rb-multi-empty", WithComponents([]workv1alpha2.Component{
+					{Name: "foo"}, {Name: ""}, {Name: ""},
+				}))).
+				Build(),
+			decoder:       &fakeDecoder{decodeObj: makeTestRB("comp-ns", "rb-multi-empty", WithComponents([]workv1alpha2.Component{{Name: "foo"}, {Name: ""}}))},
+			clientObjects: nil,
+			enableFederatedQuotaEnforcementFeatureGate:      false,
+			enableMultiplePodTemplatesSchedulingFeatureGate: true,
+			wantResponse: admission.Denied("spec.components[1].name: Invalid value: \"\": component names must be non-empty"),
+		},
+		{
+			name: "validateComponents: multiple components with duplicate names (should deny)",
+			req: newAdmissionRequestBuilder(t, admissionv1.Create, "comp-ns", "rb-multi-dup", "multi-dup").
+				WithObject(makeTestRB("comp-ns", "rb-multi-dup", WithComponents([]workv1alpha2.Component{
+					{Name: "foo"}, {Name: "foo"},
+				}))).
+				Build(),
+			decoder:       &fakeDecoder{decodeObj: makeTestRB("comp-ns", "rb-multi-dup", WithComponents([]workv1alpha2.Component{{Name: "foo"}, {Name: "foo"}}))},
+			clientObjects: nil,
+			enableFederatedQuotaEnforcementFeatureGate:      false,
+			enableMultiplePodTemplatesSchedulingFeatureGate: true,
+			wantResponse: admission.Denied("spec.components[1].name: Invalid value: \"foo\": component names must be unique"),
+		},
+		{
+			name: "create with components and sufficient quota (allowed)",
+			req: newAdmissionRequestBuilder(t, admissionv1.Create, rbWithComponents.Namespace, rbWithComponents.Name, "create-components-sufficient").
+				WithObject(rbWithComponents).
+				Build(),
+			decoder:       &fakeDecoder{decodeObj: rbWithComponents},
+			clientObjects: []client.Object{frqForComponentsSufficient},
+			enableFederatedQuotaEnforcementFeatureGate: true,
+			wantResponse: admission.Allowed(""),
+		},
+		{
+			name: "create with components and exceeded quota (denied)",
+			req: newAdmissionRequestBuilder(t, admissionv1.Create, rbWithComponents.Namespace, rbWithComponents.Name, "create-components-exceeded").
+				WithObject(rbWithComponents).
+				Build(),
+			decoder:       &fakeDecoder{decodeObj: rbWithComponents},
+			clientObjects: []client.Object{frqForComponentsExceeded},
+			enableFederatedQuotaEnforcementFeatureGate: true,
+			wantResponse: quotaExceededResponse("FederatedResourceQuota(quota-ns/frq-components-exceeded) exceeded for resource cpu: requested sum 160m, limit 150m."),
+		},
+		{
+			name: "update components passes quota (allowed response)",
+			req: newAdmissionRequestBuilder(t, admissionv1.Update, rbComponentsPassNew.Namespace, rbComponentsPassNew.Name, "update-components-pass").
+				WithObject(rbComponentsPassNew).
+				WithOldObject(rbComponentsPassOld).
+				Build(),
+			decoder:       &fakeDecoder{decodeObj: rbComponentsPassNew, rawDecodedObj: rbComponentsPassOld},
+			clientObjects: []client.Object{frqForComponentsPass},
+			enableFederatedQuotaEnforcementFeatureGate: true,
+			wantResponse: admission.Allowed(""),
+		},
+		{
+			name: "update components fails quota (denied response)",
+			req: newAdmissionRequestBuilder(t, admissionv1.Update, rbComponentsFailNew.Namespace, rbComponentsFailNew.Name, "update-components-fail").
+				WithObject(rbComponentsFailNew).
+				WithOldObject(rbComponentsFailOld).
+				Build(),
+			decoder:       &fakeDecoder{decodeObj: rbComponentsFailNew, rawDecodedObj: rbComponentsFailOld},
+			clientObjects: []client.Object{frqForComponentsFail},
+			enableFederatedQuotaEnforcementFeatureGate: true,
+			wantResponse: quotaExceededResponse("FederatedResourceQuota(quota-ns/frq-components-fail) exceeded for resource cpu: requested sum 110m, limit 100m."),
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			originalGateState := features.FeatureGate.Enabled(features.FederatedQuotaEnforcement)
-			if errFG := features.FeatureGate.Set(fmt.Sprintf("%s=%v", features.FederatedQuotaEnforcement, tt.featureGateEnabled)); errFG != nil {
-				t.Fatalf("Failed to set feature gate %s to %v: %v", features.FederatedQuotaEnforcement, tt.featureGateEnabled, errFG)
+			originalFeatureGates := features.FeatureGate.DeepCopy()
+			if errFG := features.FeatureGate.Set(fmt.Sprintf("%s=%v", features.FederatedQuotaEnforcement, tt.enableFederatedQuotaEnforcementFeatureGate)); errFG != nil {
+				t.Fatalf("Failed to set feature gate %s to %v: %v", features.FederatedQuotaEnforcement, tt.enableFederatedQuotaEnforcementFeatureGate, errFG)
+			}
+			if errFg := features.FeatureGate.Set(fmt.Sprintf("%s=%v", features.MultiplePodTemplatesScheduling, tt.enableMultiplePodTemplatesSchedulingFeatureGate)); errFg != nil {
+				t.Fatalf("Failed to set feature gate %s to %v: %v", features.MultiplePodTemplatesScheduling, tt.enableMultiplePodTemplatesSchedulingFeatureGate, errFg)
 			}
 			t.Cleanup(func() {
-				if errFG := features.FeatureGate.Set(fmt.Sprintf("%s=%v", features.FederatedQuotaEnforcement, originalGateState)); errFG != nil {
-					t.Logf("Warning: Failed to restore feature gate %s to %v: %v", features.FederatedQuotaEnforcement, originalGateState, errFG)
-				}
+				features.FeatureGate = originalFeatureGates
 			})
 
 			fakeClientBuilder := fake.NewClientBuilder().WithScheme(testScheme)
@@ -495,10 +733,475 @@ func TestValidatingAdmission_Handle(t *testing.T) {
 				if got.Result.Code != tt.wantResponse.Result.Code {
 					t.Errorf("Handle() got.Result.Code = %d, want %d", got.Result.Code, tt.wantResponse.Result.Code)
 				}
+				if got.Result.Reason != tt.wantResponse.Result.Reason {
+					t.Errorf("Handle() got.Result.Reason = %q, want %q", got.Result.Reason, tt.wantResponse.Result.Reason)
+				}
 			}
 
 			if len(got.Patches) != 0 {
 				t.Errorf("Handle() returned %d patches, want 0 for a validating webhook. Patches: %v", len(got.Patches), got.Patches)
+			}
+		})
+	}
+}
+
+func TestIsQuotaRelevantFieldChanged(t *testing.T) {
+	tests := []struct {
+		name   string
+		oldRB  *workv1alpha2.ResourceBinding
+		newRB  *workv1alpha2.ResourceBinding
+		expect bool
+	}{
+		{
+			name:   "nil old RB should return true",
+			oldRB:  nil,
+			newRB:  makeTestRB("default", "test"),
+			expect: true,
+		},
+		{
+			name:   "nil new RB should return true",
+			oldRB:  makeTestRB("default", "test"),
+			newRB:  nil,
+			expect: true,
+		},
+		{
+			name:   "both nil should return true",
+			oldRB:  nil,
+			newRB:  nil,
+			expect: true,
+		},
+		{
+			name: "no changes should return false",
+			oldRB: makeTestRB("default", "test",
+				WithClusters([]workv1alpha2.TargetCluster{{Name: "c1", Replicas: 2}}),
+				WithReplicaRequirements(corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m")}),
+			),
+			newRB: makeTestRB("default", "test",
+				WithClusters([]workv1alpha2.TargetCluster{{Name: "c1", Replicas: 2}}),
+				WithReplicaRequirements(corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m")}),
+			),
+			expect: false,
+		},
+		{
+			name: "resource request changed should return true",
+			oldRB: makeTestRB("default", "test",
+				WithReplicaRequirements(corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m")}),
+			),
+			newRB: makeTestRB("default", "test",
+				WithReplicaRequirements(corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("200m")}),
+			),
+			expect: true,
+		},
+		{
+			name: "scheduled replicas changed should return true",
+			oldRB: makeTestRB("default", "test",
+				WithClusters([]workv1alpha2.TargetCluster{{Name: "c1", Replicas: 1}}),
+			),
+			newRB: makeTestRB("default", "test",
+				WithClusters([]workv1alpha2.TargetCluster{{Name: "c1", Replicas: 2}}),
+			),
+			expect: true,
+		},
+		{
+			name: "components changed should return true",
+			oldRB: makeTestRB("default", "test",
+				WithComponents([]workv1alpha2.Component{{Name: "comp1", Replicas: 1}}),
+			),
+			newRB: makeTestRB("default", "test",
+				WithComponents([]workv1alpha2.Component{{Name: "comp1", Replicas: 2}}),
+			),
+			expect: true,
+		},
+		{
+			name: "non-quota relevant field changed should return false",
+			oldRB: makeTestRB("default", "test",
+				WithResourceRef(workv1alpha2.ObjectReference{APIVersion: "v1", Kind: "Pod", Name: "old-pod"}),
+			),
+			newRB: makeTestRB("default", "test",
+				WithResourceRef(workv1alpha2.ObjectReference{APIVersion: "v1", Kind: "Pod", Name: "new-pod"}),
+			),
+			expect: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isQuotaRelevantFieldChanged(tt.oldRB, tt.newRB)
+			if got != tt.expect {
+				t.Errorf("isQuotaRelevantFieldChanged() = %v, want %v", got, tt.expect)
+			}
+		})
+	}
+}
+
+func TestIsResourceRequestChanged(t *testing.T) {
+	tests := []struct {
+		name   string
+		oldRB  *workv1alpha2.ResourceBinding
+		newRB  *workv1alpha2.ResourceBinding
+		expect bool
+	}{
+		{
+			name: "no replica requirements in both should return false",
+			oldRB: makeTestRB("default", "test",
+				WithReplicaRequirements(nil),
+			),
+			newRB: makeTestRB("default", "test",
+				WithReplicaRequirements(nil),
+			),
+			expect: false,
+		},
+		{
+			name: "old has no replica requirements, new has some should return true",
+			oldRB: makeTestRB("default", "test",
+				WithReplicaRequirements(nil),
+			),
+			newRB: makeTestRB("default", "test",
+				WithReplicaRequirements(corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m")}),
+			),
+			expect: true,
+		},
+		{
+			name: "old has replica requirements, new has none should return true",
+			oldRB: makeTestRB("default", "test",
+				WithReplicaRequirements(corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m")}),
+			),
+			newRB: makeTestRB("default", "test",
+				WithReplicaRequirements(nil),
+			),
+			expect: true,
+		},
+		{
+			name: "same resource requests should return false",
+			oldRB: makeTestRB("default", "test",
+				WithReplicaRequirements(corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("100m"),
+					corev1.ResourceMemory: resource.MustParse("128Mi"),
+				}),
+			),
+			newRB: makeTestRB("default", "test",
+				WithReplicaRequirements(corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("100m"),
+					corev1.ResourceMemory: resource.MustParse("128Mi"),
+				}),
+			),
+			expect: false,
+		},
+		{
+			name: "different resource requests should return true",
+			oldRB: makeTestRB("default", "test",
+				WithReplicaRequirements(corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m")}),
+			),
+			newRB: makeTestRB("default", "test",
+				WithReplicaRequirements(corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("200m")}),
+			),
+			expect: true,
+		},
+		{
+			name: "different resource types should return true",
+			oldRB: makeTestRB("default", "test",
+				WithReplicaRequirements(corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m")}),
+			),
+			newRB: makeTestRB("default", "test",
+				WithReplicaRequirements(corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("128Mi")}),
+			),
+			expect: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isResourceRequestChanged(tt.oldRB, tt.newRB)
+			if got != tt.expect {
+				t.Errorf("isResourceRequestChanged() = %v, want %v", got, tt.expect)
+			}
+		})
+	}
+}
+
+func TestIsScheduledReplicasChanged(t *testing.T) {
+	tests := []struct {
+		name   string
+		oldRB  *workv1alpha2.ResourceBinding
+		newRB  *workv1alpha2.ResourceBinding
+		expect bool
+	}{
+		{
+			name: "no clusters in both should return false",
+			oldRB: makeTestRB("default", "test",
+				WithClusters(nil),
+			),
+			newRB: makeTestRB("default", "test",
+				WithClusters(nil),
+			),
+			expect: false,
+		},
+		{
+			name: "same total replicas should return false",
+			oldRB: makeTestRB("default", "test",
+				WithClusters([]workv1alpha2.TargetCluster{
+					{Name: "c1", Replicas: 2},
+					{Name: "c2", Replicas: 3},
+				}),
+			),
+			newRB: makeTestRB("default", "test",
+				WithClusters([]workv1alpha2.TargetCluster{
+					{Name: "c1", Replicas: 1},
+					{Name: "c2", Replicas: 4},
+				}),
+			),
+			expect: false,
+		},
+		{
+			name: "different total replicas should return true",
+			oldRB: makeTestRB("default", "test",
+				WithClusters([]workv1alpha2.TargetCluster{
+					{Name: "c1", Replicas: 2},
+				}),
+			),
+			newRB: makeTestRB("default", "test",
+				WithClusters([]workv1alpha2.TargetCluster{
+					{Name: "c1", Replicas: 3},
+				}),
+			),
+			expect: true,
+		},
+		{
+			name: "old has no clusters, new has clusters should return true",
+			oldRB: makeTestRB("default", "test",
+				WithClusters(nil),
+			),
+			newRB: makeTestRB("default", "test",
+				WithClusters([]workv1alpha2.TargetCluster{{Name: "c1", Replicas: 1}}),
+			),
+			expect: true,
+		},
+		{
+			name: "old has clusters, new has no clusters should return true",
+			oldRB: makeTestRB("default", "test",
+				WithClusters([]workv1alpha2.TargetCluster{{Name: "c1", Replicas: 1}}),
+			),
+			newRB: makeTestRB("default", "test",
+				WithClusters(nil),
+			),
+			expect: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isScheduledReplicasChanged(tt.oldRB, tt.newRB)
+			if got != tt.expect {
+				t.Errorf("isScheduledReplicasChanged() = %v, want %v", got, tt.expect)
+			}
+		})
+	}
+}
+
+func TestIsComponentsChanged(t *testing.T) {
+	makeComponent := func(name string, replicas int32, cpu string) workv1alpha2.Component {
+		comp := workv1alpha2.Component{
+			Name:     name,
+			Replicas: replicas,
+		}
+		if cpu != "" {
+			comp.ReplicaRequirements = &workv1alpha2.ComponentReplicaRequirements{
+				ResourceRequest: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse(cpu)},
+			}
+		}
+		return comp
+	}
+
+	tests := []struct {
+		name   string
+		oldRB  *workv1alpha2.ResourceBinding
+		newRB  *workv1alpha2.ResourceBinding
+		expect bool
+	}{
+		{
+			name: "no components in both should return false",
+			oldRB: makeTestRB("default", "test",
+				WithComponents(nil),
+			),
+			newRB: makeTestRB("default", "test",
+				WithComponents(nil),
+			),
+			expect: false,
+		},
+		{
+			name: "same components should return false",
+			oldRB: makeTestRB("default", "test",
+				WithComponents([]workv1alpha2.Component{
+					makeComponent("comp1", 2, "100m"),
+					makeComponent("comp2", 1, "50m"),
+				}),
+			),
+			newRB: makeTestRB("default", "test",
+				WithComponents([]workv1alpha2.Component{
+					makeComponent("comp1", 2, "100m"),
+					makeComponent("comp2", 1, "50m"),
+				}),
+			),
+			expect: false,
+		},
+		{
+			name: "different number of components should return true",
+			oldRB: makeTestRB("default", "test",
+				WithComponents([]workv1alpha2.Component{
+					makeComponent("comp1", 1, "100m"),
+				}),
+			),
+			newRB: makeTestRB("default", "test",
+				WithComponents([]workv1alpha2.Component{
+					makeComponent("comp1", 1, "100m"),
+					makeComponent("comp2", 1, "50m"),
+				}),
+			),
+			expect: true,
+		},
+		{
+			name: "different replicas should return true",
+			oldRB: makeTestRB("default", "test",
+				WithComponents([]workv1alpha2.Component{
+					makeComponent("comp1", 1, "100m"),
+				}),
+			),
+			newRB: makeTestRB("default", "test",
+				WithComponents([]workv1alpha2.Component{
+					makeComponent("comp1", 2, "100m"),
+				}),
+			),
+			expect: true,
+		},
+		{
+			name: "old has replica requirements, new doesn't should return true",
+			oldRB: makeTestRB("default", "test",
+				WithComponents([]workv1alpha2.Component{
+					makeComponent("comp1", 1, "100m"),
+				}),
+			),
+			newRB: makeTestRB("default", "test",
+				WithComponents([]workv1alpha2.Component{
+					makeComponent("comp1", 1, ""),
+				}),
+			),
+			expect: true,
+		},
+		{
+			name: "old doesn't have replica requirements, new does should return true",
+			oldRB: makeTestRB("default", "test",
+				WithComponents([]workv1alpha2.Component{
+					makeComponent("comp1", 1, ""),
+				}),
+			),
+			newRB: makeTestRB("default", "test",
+				WithComponents([]workv1alpha2.Component{
+					makeComponent("comp1", 1, "100m"),
+				}),
+			),
+			expect: true,
+		},
+		{
+			name: "different resource requests should return true",
+			oldRB: makeTestRB("default", "test",
+				WithComponents([]workv1alpha2.Component{
+					makeComponent("comp1", 1, "100m"),
+				}),
+			),
+			newRB: makeTestRB("default", "test",
+				WithComponents([]workv1alpha2.Component{
+					makeComponent("comp1", 1, "200m"),
+				}),
+			),
+			expect: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isComponentsChanged(tt.oldRB, tt.newRB)
+			if got != tt.expect {
+				t.Errorf("isComponentsChanged() = %v, want %v", got, tt.expect)
+			}
+		})
+	}
+}
+
+func TestAreResourceListsEqual(t *testing.T) {
+	tests := []struct {
+		name   string
+		a      corev1.ResourceList
+		b      corev1.ResourceList
+		expect bool
+	}{
+		{
+			name:   "both nil should return true",
+			a:      nil,
+			b:      nil,
+			expect: true,
+		},
+		{
+			name:   "both empty should return true",
+			a:      corev1.ResourceList{},
+			b:      corev1.ResourceList{},
+			expect: true,
+		},
+		{
+			name: "same resources should return true",
+			a: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("100m"),
+				corev1.ResourceMemory: resource.MustParse("128Mi"),
+			},
+			b: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("100m"),
+				corev1.ResourceMemory: resource.MustParse("128Mi"),
+			},
+			expect: true,
+		},
+		{
+			name: "different lengths should return false",
+			a: corev1.ResourceList{
+				corev1.ResourceCPU: resource.MustParse("100m"),
+			},
+			b: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("100m"),
+				corev1.ResourceMemory: resource.MustParse("128Mi"),
+			},
+			expect: false,
+		},
+		{
+			name: "different keys should return false",
+			a: corev1.ResourceList{
+				corev1.ResourceCPU: resource.MustParse("100m"),
+			},
+			b: corev1.ResourceList{
+				corev1.ResourceMemory: resource.MustParse("128Mi"),
+			},
+			expect: false,
+		},
+		{
+			name: "different values should return false",
+			a: corev1.ResourceList{
+				corev1.ResourceCPU: resource.MustParse("100m"),
+			},
+			b: corev1.ResourceList{
+				corev1.ResourceCPU: resource.MustParse("200m"),
+			},
+			expect: false,
+		},
+		{
+			name:   "one nil, one empty should return true",
+			a:      nil,
+			b:      corev1.ResourceList{},
+			expect: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := areResourceListsEqual(tt.a, tt.b)
+			if got != tt.expect {
+				t.Errorf("areResourceListsEqual() = %v, want %v", got, tt.expect)
 			}
 		})
 	}

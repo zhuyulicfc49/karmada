@@ -59,7 +59,7 @@ spec:
             - --leader-elect-resource-namespace={{ $systemNamespace }}
             - --metrics-bind-address=$(POD_IP):8080
             - --health-probe-bind-address=$(POD_IP):10357
-            - --v=2
+            - --v={{ .Values.controllerManager.logVerbosity }}
             {{- if .Values.controllerManager.controllers }}
             - --controllers={{ .Values.controllerManager.controllers }}
             {{- end }}

@@ -27,8 +27,8 @@ import (
 func TestConvertToTypedObject(t *testing.T) {
 	testCases := []struct {
 		name        string
-		in          interface{}
-		out         interface{}
+		in          any
+		out         any
 		expectedErr bool
 	}{
 		{
@@ -51,8 +51,8 @@ func TestConvertToTypedObject(t *testing.T) {
 		{
 			name: "convert unstructured object success",
 			in: &unstructured.Unstructured{
-				Object: map[string]interface{}{
-					"metadata": map[string]interface{}{
+				Object: map[string]any{
+					"metadata": map[string]any{
 						"name": "some-pod",
 					},
 				},
@@ -62,8 +62,8 @@ func TestConvertToTypedObject(t *testing.T) {
 		},
 		{
 			name: "convert map[string]interface{} object success",
-			in: map[string]interface{}{
-				"metadata": map[string]interface{}{
+			in: map[string]any{
+				"metadata": map[string]any{
 					"name": "some-pod",
 				},
 			},
@@ -72,8 +72,8 @@ func TestConvertToTypedObject(t *testing.T) {
 		},
 		{
 			name: "convert map[string]interface{} object with invalid spec",
-			in: map[string]interface{}{
-				"metadata": map[string]interface{}{
+			in: map[string]any{
+				"metadata": map[string]any{
 					"name": 123,
 				},
 			},
@@ -103,8 +103,8 @@ func TestApplyReplica(t *testing.T) {
 		{
 			name: "replica with wrong type",
 			workload: &unstructured.Unstructured{
-				Object: map[string]interface{}{
-					"spec": map[string]interface{}{
+				Object: map[string]any{
+					"spec": map[string]any{
 						"replicas": "some",
 					},
 				},
@@ -116,8 +116,8 @@ func TestApplyReplica(t *testing.T) {
 		{
 			name: "replicas field is not existing",
 			workload: &unstructured.Unstructured{
-				Object: map[string]interface{}{
-					"spec": map[string]interface{}{},
+				Object: map[string]any{
+					"spec": map[string]any{},
 				},
 			},
 			replicas:         2,
@@ -128,8 +128,8 @@ func TestApplyReplica(t *testing.T) {
 		{
 			name: "apply replicas success",
 			workload: &unstructured.Unstructured{
-				Object: map[string]interface{}{
-					"spec": map[string]interface{}{
+				Object: map[string]any{
+					"spec": map[string]any{
 						"replicas": int64(1),
 					},
 				},
@@ -156,10 +156,75 @@ func TestApplyReplica(t *testing.T) {
 	}
 }
 
+func TestApplyReplicaAlways(t *testing.T) {
+	testCases := []struct {
+		name             string
+		workload         *unstructured.Unstructured
+		replicas         int64
+		field            string
+		expectedReplicas int64
+		expectedErr      bool
+	}{
+		{
+			name: "replica with wrong type",
+			workload: &unstructured.Unstructured{
+				Object: map[string]any{
+					"spec": map[string]any{
+						"replicas": "some",
+					},
+				},
+			},
+			replicas:    2,
+			field:       "replicas",
+			expectedErr: true,
+		},
+		{
+			name: "replicas field is not existing - should set it",
+			workload: &unstructured.Unstructured{
+				Object: map[string]any{
+					"spec": map[string]any{},
+				},
+			},
+			replicas:         2,
+			field:            "replicas",
+			expectedReplicas: 2,
+			expectedErr:      false,
+		},
+		{
+			name: "apply replicas success",
+			workload: &unstructured.Unstructured{
+				Object: map[string]any{
+					"spec": map[string]any{
+						"replicas": int64(1),
+					},
+				},
+			},
+			replicas:         2,
+			field:            "replicas",
+			expectedReplicas: 2,
+			expectedErr:      false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := ApplyReplicaAlways(tc.workload, tc.replicas, tc.field); (err != nil) != tc.expectedErr {
+				t.Errorf("ApplyReplicaAlways expected error %v, but got %v", tc.expectedErr, err)
+			}
+			if !tc.expectedErr {
+				gotReplicas, _, _ := unstructured.NestedInt64(tc.workload.Object, "spec", tc.field)
+				if gotReplicas != tc.expectedReplicas {
+					t.Errorf("ApplyReplicaAlways expected replicas %d, but got %d", tc.expectedReplicas, gotReplicas)
+				}
+			}
+		})
+	}
+}
+
 func TestToUnstructured(t *testing.T) {
 	testCases := []struct {
 		name        string
-		object      interface{}
+		object      any
 		expectedErr bool
 	}{
 		{
@@ -170,10 +235,10 @@ func TestToUnstructured(t *testing.T) {
 		{
 			name: "convert unstructured object",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "Deployment",
-					"spec": map[string]interface{}{
+					"spec": map[string]any{
 						"replicas": int64(1),
 					},
 				},

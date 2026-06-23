@@ -38,24 +38,24 @@ var (
 	}{
 		{
 			podSpecsWithDependencies: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"serviceAccountName": "test-serviceaccount",
-					"volumes": []interface{}{
-						map[string]interface{}{
+					"volumes": []any{
+						map[string]any{
 							"name": "initcontainer-volume-mount",
-							"configMap": map[string]interface{}{
+							"configMap": map[string]any{
 								"name": "test-configmap",
 							},
 						},
-						map[string]interface{}{
+						map[string]any{
 							"name": "cloud-secret-volume",
-							"secret": map[string]interface{}{
+							"secret": map[string]any{
 								"secretName": "cloud-secret",
 							},
 						},
-						map[string]interface{}{
+						map[string]any{
 							"name": "container-volume-mount",
-							"persistentVolumeClaim": map[string]interface{}{
+							"persistentVolumeClaim": map[string]any{
 								"claimName": "test-pvc",
 							},
 						},
@@ -91,29 +91,29 @@ var (
 		},
 		{
 			podSpecsWithDependencies: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"serviceAccountName": "test-serviceaccount",
-					"imagePullSecrets": []interface{}{
-						map[string]interface{}{
+					"imagePullSecrets": []any{
+						map[string]any{
 							"name": "test-secret",
 						},
 					},
-					"initContainers": []interface{}{
-						map[string]interface{}{
-							"envFrom": []interface{}{
-								map[string]interface{}{
-									"configMapRef": map[string]interface{}{
+					"initContainers": []any{
+						map[string]any{
+							"envFrom": []any{
+								map[string]any{
+									"configMapRef": map[string]any{
 										"name": "initcontainer-envfrom-configmap",
 									},
-									"secretRef": map[string]interface{}{
+									"secretRef": map[string]any{
 										"name": "test-secret",
 									},
 								},
 							},
-							"env": []interface{}{
-								map[string]interface{}{
-									"valueFrom": map[string]interface{}{
-										"secretKeyRef": map[string]interface{}{
+							"env": []any{
+								map[string]any{
+									"valueFrom": map[string]any{
+										"secretKeyRef": map[string]any{
 											"name": "test-secret",
 										},
 									},
@@ -146,20 +146,20 @@ var (
 		},
 		{
 			podSpecsWithDependencies: &unstructured.Unstructured{
-				Object: map[string]interface{}{
-					"containers": []interface{}{
-						map[string]interface{}{
-							"envFrom": []interface{}{
-								map[string]interface{}{
-									"configMapRef": map[string]interface{}{
+				Object: map[string]any{
+					"containers": []any{
+						map[string]any{
+							"envFrom": []any{
+								map[string]any{
+									"configMapRef": map[string]any{
 										"name": "test-configmap",
 									},
 								},
 							},
-							"env": []interface{}{
-								map[string]interface{}{
-									"valueFrom": map[string]interface{}{
-										"configMapKeyRef": map[string]interface{}{
+							"env": []any{
+								map[string]any{
+									"valueFrom": map[string]any{
+										"configMapKeyRef": map[string]any{
 											"name": "test-configmap",
 										},
 									},
@@ -167,13 +167,13 @@ var (
 							},
 						},
 					},
-					"volumes": []interface{}{
-						map[string]interface{}{
+					"volumes": []any{
+						map[string]any{
 							"name": "container-volume-mount",
-							"persistentVolumeClaim": map[string]interface{}{
+							"persistentVolumeClaim": map[string]any{
 								"claimName": "test-pvc",
 							},
-							"azureFile": map[string]interface{}{
+							"azureFile": map[string]any{
 								"secretName": "test-secret",
 							},
 						},
@@ -214,15 +214,15 @@ func Test_getDeploymentDependencies(t *testing.T) {
 		{
 			name: "deployment without dependencies",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "Deployment",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":       "fake-deployment",
 						"generation": 1,
 						"namespace":  namespace,
 					},
-					"spec": map[string]interface{}{
+					"spec": map[string]any{
 						"replicas": 3,
 					},
 				},
@@ -233,17 +233,17 @@ func Test_getDeploymentDependencies(t *testing.T) {
 		{
 			name: "deployment with dependencies 1",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "Deployment",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":       "fake-deployment",
 						"generation": 1,
 						"namespace":  namespace,
 					},
-					"spec": map[string]interface{}{
+					"spec": map[string]any{
 						"replicas": 3,
-						"template": map[string]interface{}{
+						"template": map[string]any{
 							"spec": testPairs[0].podSpecsWithDependencies.Object,
 						},
 					},
@@ -255,16 +255,16 @@ func Test_getDeploymentDependencies(t *testing.T) {
 		{
 			name: "deployment with dependencies 2",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "Deployment",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "fake-deployment",
 						"namespace": namespace,
 					},
-					"spec": map[string]interface{}{
+					"spec": map[string]any{
 						"replicas": 3,
-						"template": map[string]interface{}{
+						"template": map[string]any{
 							"spec": testPairs[1].podSpecsWithDependencies.Object,
 						},
 					},
@@ -276,16 +276,16 @@ func Test_getDeploymentDependencies(t *testing.T) {
 		{
 			name: "deployment with dependencies 3",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "Deployment",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "fake-deployment",
 						"namespace": namespace,
 					},
-					"spec": map[string]interface{}{
+					"spec": map[string]any{
 						"replicas": 3,
-						"template": map[string]interface{}{
+						"template": map[string]any{
 							"spec": testPairs[2].podSpecsWithDependencies.Object,
 						},
 					},
@@ -311,6 +311,113 @@ func Test_getDeploymentDependencies(t *testing.T) {
 	}
 }
 
+func Test_getReplicaSetDependencies(t *testing.T) {
+	tests := []struct {
+		name    string
+		object  *unstructured.Unstructured
+		want    []configv1alpha1.DependentObjectReference
+		wantErr bool
+	}{
+		{
+			name: "replicaset without dependencies",
+			object: &unstructured.Unstructured{
+				Object: map[string]any{
+					"apiVersion": "apps/v1",
+					"kind":       "ReplicaSet",
+					"metadata": map[string]any{
+						"name":       "fake-replicaset",
+						"generation": 1,
+						"namespace":  namespace,
+					},
+					"spec": map[string]any{
+						"replicas": 3,
+					},
+				},
+			},
+			want:    nil,
+			wantErr: false,
+		},
+		{
+			name: "replicaset with dependencies 1",
+			object: &unstructured.Unstructured{
+				Object: map[string]any{
+					"apiVersion": "apps/v1",
+					"kind":       "ReplicaSet",
+					"metadata": map[string]any{
+						"name":       "fake-replicaset",
+						"generation": 1,
+						"namespace":  namespace,
+					},
+					"spec": map[string]any{
+						"replicas": 3,
+						"template": map[string]any{
+							"spec": testPairs[0].podSpecsWithDependencies.Object,
+						},
+					},
+				},
+			},
+			want:    testPairs[0].dependentObjectReference,
+			wantErr: false,
+		},
+		{
+			name: "replicaset with dependencies 2",
+			object: &unstructured.Unstructured{
+				Object: map[string]any{
+					"apiVersion": "apps/v1",
+					"kind":       "ReplicaSet",
+					"metadata": map[string]any{
+						"name":      "fake-replicaset",
+						"namespace": namespace,
+					},
+					"spec": map[string]any{
+						"replicas": 3,
+						"template": map[string]any{
+							"spec": testPairs[1].podSpecsWithDependencies.Object,
+						},
+					},
+				},
+			},
+			want:    testPairs[1].dependentObjectReference,
+			wantErr: false,
+		},
+		{
+			name: "replicaset with dependencies 3",
+			object: &unstructured.Unstructured{
+				Object: map[string]any{
+					"apiVersion": "apps/v1",
+					"kind":       "ReplicaSet",
+					"metadata": map[string]any{
+						"name":      "fake-replicaset",
+						"namespace": namespace,
+					},
+					"spec": map[string]any{
+						"replicas": 3,
+						"template": map[string]any{
+							"spec": testPairs[2].podSpecsWithDependencies.Object,
+						},
+					},
+				},
+			},
+			want:    testPairs[2].dependentObjectReference,
+			wantErr: false,
+		},
+	}
+
+	for i := range tests {
+		tt := tests[i]
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := getReplicaSetDependencies(tt.object)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("getReplicaSetDependencies() err = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("getReplicaSetDependencies() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func Test_getJobDependencies(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -321,14 +428,14 @@ func Test_getJobDependencies(t *testing.T) {
 		{
 			name: "job without dependencies",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "batch/v1",
 					"kind":       "Job",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "fake-job",
 						"namespace": namespace,
 					},
-					"spec": map[string]interface{}{
+					"spec": map[string]any{
 						"parallelism": 1,
 					},
 				},
@@ -339,16 +446,16 @@ func Test_getJobDependencies(t *testing.T) {
 		{
 			name: "job with dependencies 1",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "batch/v1",
 					"kind":       "Job",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "fake-job",
 						"namespace": namespace,
 					},
-					"spec": map[string]interface{}{
+					"spec": map[string]any{
 						"parallelism": 1,
-						"template": map[string]interface{}{
+						"template": map[string]any{
 							"spec": testPairs[0].podSpecsWithDependencies.Object,
 						},
 					},
@@ -360,16 +467,16 @@ func Test_getJobDependencies(t *testing.T) {
 		{
 			name: "job with dependencies 2",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "batch/v1",
 					"kind":       "Job",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "fake-job",
 						"namespace": namespace,
 					},
-					"spec": map[string]interface{}{
+					"spec": map[string]any{
 						"parallelism": 1,
-						"template": map[string]interface{}{
+						"template": map[string]any{
 							"spec": testPairs[1].podSpecsWithDependencies.Object,
 						},
 					},
@@ -381,16 +488,16 @@ func Test_getJobDependencies(t *testing.T) {
 		{
 			name: "job with dependencies 3",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "batch/v1",
 					"kind":       "Job",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "fake-job",
 						"namespace": namespace,
 					},
-					"spec": map[string]interface{}{
+					"spec": map[string]any{
 						"parallelism": 1,
-						"template": map[string]interface{}{
+						"template": map[string]any{
 							"spec": testPairs[2].podSpecsWithDependencies.Object,
 						},
 					},
@@ -426,14 +533,14 @@ func Test_getCronJobDependencies(t *testing.T) {
 		{
 			name: "cronjob without dependencies",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "batch/v1beta1",
 					"kind":       "CronJob",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "fake-cronjob",
 						"namespace": namespace,
 					},
-					"spec": map[string]interface{}{
+					"spec": map[string]any{
 						"schedule": "*/1 * * * *",
 					},
 				},
@@ -444,18 +551,18 @@ func Test_getCronJobDependencies(t *testing.T) {
 		{
 			name: "cronjob with dependencies 1",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "batch/v1beta1",
 					"kind":       "CronJob",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "fake-cronjob",
 						"namespace": namespace,
 					},
-					"spec": map[string]interface{}{
+					"spec": map[string]any{
 						"schedule": "*/1 * * * *",
-						"jobTemplate": map[string]interface{}{
-							"spec": map[string]interface{}{
-								"template": map[string]interface{}{
+						"jobTemplate": map[string]any{
+							"spec": map[string]any{
+								"template": map[string]any{
 									"spec": testPairs[0].podSpecsWithDependencies.Object,
 								},
 							},
@@ -469,18 +576,18 @@ func Test_getCronJobDependencies(t *testing.T) {
 		{
 			name: "cronjob with dependencies 2",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "batch/v1beta1",
 					"kind":       "CronJob",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "fake-cronjob",
 						"namespace": namespace,
 					},
-					"spec": map[string]interface{}{
+					"spec": map[string]any{
 						"schedule": "*/1 * * * *",
-						"jobTemplate": map[string]interface{}{
-							"spec": map[string]interface{}{
-								"template": map[string]interface{}{
+						"jobTemplate": map[string]any{
+							"spec": map[string]any{
+								"template": map[string]any{
 									"spec": testPairs[1].podSpecsWithDependencies.Object,
 								},
 							},
@@ -494,18 +601,18 @@ func Test_getCronJobDependencies(t *testing.T) {
 		{
 			name: "cronjob with dependencies 3",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "batch/v1beta1",
 					"kind":       "CronJob",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "fake-cronjob",
 						"namespace": namespace,
 					},
-					"spec": map[string]interface{}{
+					"spec": map[string]any{
 						"schedule": "*/1 * * * *",
-						"jobTemplate": map[string]interface{}{
-							"spec": map[string]interface{}{
-								"template": map[string]interface{}{
+						"jobTemplate": map[string]any{
+							"spec": map[string]any{
+								"template": map[string]any{
 									"spec": testPairs[2].podSpecsWithDependencies.Object,
 								},
 							},
@@ -543,19 +650,19 @@ func Test_getPodDependencies(t *testing.T) {
 		{
 			name: "pod without dependencies",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "v1",
 					"kind":       "Pod",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "fake-pod",
 						"namespace": namespace,
 					},
-					"spec": map[string]interface{}{
-						"containers": []interface{}{
-							map[string]interface{}{
+					"spec": map[string]any{
+						"containers": []any{
+							map[string]any{
 								"name":  "example-container",
 								"image": "busybox",
-								"command": []interface{}{
+								"command": []any{
 									"echo",
 									"Hello, World!",
 								},
@@ -570,10 +677,10 @@ func Test_getPodDependencies(t *testing.T) {
 		{
 			name: "pod with dependencies 1",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "v1",
 					"kind":       "Pod",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "fake-pod",
 						"namespace": namespace,
 					},
@@ -586,10 +693,10 @@ func Test_getPodDependencies(t *testing.T) {
 		{
 			name: "pod with dependencies 2",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "v1",
 					"kind":       "Pod",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "fake-pod",
 						"namespace": namespace,
 					},
@@ -602,10 +709,10 @@ func Test_getPodDependencies(t *testing.T) {
 		{
 			name: "pod with dependencies 3",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "batch/v1beta1",
 					"kind":       "pod",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "fake-pod",
 						"namespace": namespace,
 					},
@@ -642,16 +749,16 @@ func Test_getDaemonSetDependencies(t *testing.T) {
 		{
 			name: "daemonset without dependencies",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "DaemonSet",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "fake-daemonset",
 						"namespace": namespace,
 					},
-					"spec": map[string]interface{}{
-						"selector": map[string]interface{}{
-							"matchLabels": map[string]interface{}{
+					"spec": map[string]any{
+						"selector": map[string]any{
+							"matchLabels": map[string]any{
 								"app": "fake",
 							},
 						},
@@ -664,20 +771,20 @@ func Test_getDaemonSetDependencies(t *testing.T) {
 		{
 			name: "daemonset with dependencies 1",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "DaemonSet",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "fake-daemonset",
 						"namespace": namespace,
 					},
-					"spec": map[string]interface{}{
-						"selector": map[string]interface{}{
-							"matchLabels": map[string]interface{}{
+					"spec": map[string]any{
+						"selector": map[string]any{
+							"matchLabels": map[string]any{
 								"app": "fake",
 							},
 						},
-						"template": map[string]interface{}{
+						"template": map[string]any{
 							"spec": testPairs[0].podSpecsWithDependencies.Object,
 						},
 					},
@@ -689,20 +796,20 @@ func Test_getDaemonSetDependencies(t *testing.T) {
 		{
 			name: "daemonset with dependencies 2",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "DaemonSet",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "fake-daemonset",
 						"namespace": namespace,
 					},
-					"spec": map[string]interface{}{
-						"selector": map[string]interface{}{
-							"matchLabels": map[string]interface{}{
+					"spec": map[string]any{
+						"selector": map[string]any{
+							"matchLabels": map[string]any{
 								"app": "fake",
 							},
 						},
-						"template": map[string]interface{}{
+						"template": map[string]any{
 							"spec": testPairs[1].podSpecsWithDependencies.Object,
 						},
 					},
@@ -714,20 +821,20 @@ func Test_getDaemonSetDependencies(t *testing.T) {
 		{
 			name: "daemonset with dependencies 3",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "DaemonSet",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "fake-daemonset",
 						"namespace": namespace,
 					},
-					"spec": map[string]interface{}{
-						"selector": map[string]interface{}{
-							"matchLabels": map[string]interface{}{
+					"spec": map[string]any{
+						"selector": map[string]any{
+							"matchLabels": map[string]any{
 								"app": "fake",
 							},
 						},
-						"template": map[string]interface{}{
+						"template": map[string]any{
 							"spec": testPairs[2].podSpecsWithDependencies.Object,
 						},
 					},
@@ -763,17 +870,17 @@ func Test_getStatefulSetDependencies(t *testing.T) {
 		{
 			name: "statefulset without dependencies",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "StatefulSet",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "fake-statefulset",
 						"namespace": namespace,
 					},
-					"spec": map[string]interface{}{
+					"spec": map[string]any{
 						"serviceName": "fake-service",
-						"selector": map[string]interface{}{
-							"matchLabels": map[string]interface{}{
+						"selector": map[string]any{
+							"matchLabels": map[string]any{
 								"app": "fake",
 							},
 						},
@@ -786,21 +893,21 @@ func Test_getStatefulSetDependencies(t *testing.T) {
 		{
 			name: "statefulset with dependencies 1",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "StatefulSet",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "fake-statefulset",
 						"namespace": namespace,
 					},
-					"spec": map[string]interface{}{
+					"spec": map[string]any{
 						"serviceName": "fake-service",
-						"selector": map[string]interface{}{
-							"matchLabels": map[string]interface{}{
+						"selector": map[string]any{
+							"matchLabels": map[string]any{
 								"app": "fake",
 							},
 						},
-						"template": map[string]interface{}{
+						"template": map[string]any{
 							"spec": testPairs[0].podSpecsWithDependencies.Object,
 						},
 					},
@@ -812,21 +919,21 @@ func Test_getStatefulSetDependencies(t *testing.T) {
 		{
 			name: "statefulset with dependencies 2",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "StatefulSet",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "fake-statefulset",
 						"namespace": namespace,
 					},
-					"spec": map[string]interface{}{
+					"spec": map[string]any{
 						"serviceName": "fake-service",
-						"selector": map[string]interface{}{
-							"matchLabels": map[string]interface{}{
+						"selector": map[string]any{
+							"matchLabels": map[string]any{
 								"app": "fake",
 							},
 						},
-						"template": map[string]interface{}{
+						"template": map[string]any{
 							"spec": testPairs[1].podSpecsWithDependencies.Object,
 						},
 					},
@@ -838,21 +945,21 @@ func Test_getStatefulSetDependencies(t *testing.T) {
 		{
 			name: "statefulset with dependencies 3",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "StatefulSet",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "fake-statefulset",
 						"namespace": namespace,
 					},
-					"spec": map[string]interface{}{
+					"spec": map[string]any{
 						"serviceName": "fake-service",
-						"selector": map[string]interface{}{
-							"matchLabels": map[string]interface{}{
+						"selector": map[string]any{
+							"matchLabels": map[string]any{
 								"app": "fake",
 							},
 						},
-						"template": map[string]interface{}{
+						"template": map[string]any{
 							"spec": testPairs[2].podSpecsWithDependencies.Object,
 						},
 					},
@@ -864,26 +971,26 @@ func Test_getStatefulSetDependencies(t *testing.T) {
 		{
 			name: "statefulset with partial dependencies 4",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "StatefulSet",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "fake-statefulset",
 						"namespace": namespace,
 					},
-					"spec": map[string]interface{}{
+					"spec": map[string]any{
 						"serviceName": "fake-service",
-						"selector": map[string]interface{}{
-							"matchLabels": map[string]interface{}{
+						"selector": map[string]any{
+							"matchLabels": map[string]any{
 								"app": "fake",
 							},
 						},
-						"template": map[string]interface{}{
+						"template": map[string]any{
 							"spec": testPairs[0].podSpecsWithDependencies.Object,
 						},
-						"volumeClaimTemplates": []interface{}{
-							map[string]interface{}{
-								"metadata": map[string]interface{}{
+						"volumeClaimTemplates": []any{
+							map[string]any{
+								"metadata": map[string]any{
 									"name": "test-pvc",
 								},
 							},
@@ -925,17 +1032,17 @@ func Test_getServiceImportDependencies(t *testing.T) {
 			name: "serviceImport get dependencies",
 			args: args{
 				object: &unstructured.Unstructured{
-					Object: map[string]interface{}{
+					Object: map[string]any{
 						"apiVersion": mcsv1alpha1.GroupVersion.String(),
 						"kind":       util.ServiceImportKind,
-						"metadata": map[string]interface{}{
+						"metadata": map[string]any{
 							"name":      "fake-serviceImport",
 							"namespace": namespace,
 						},
-						"spec": map[string]interface{}{
+						"spec": map[string]any{
 							"type": "ClusterSetIP",
-							"ports": []interface{}{
-								map[string]interface{}{
+							"ports": []any{
+								map[string]any{
 									"port":     80,
 									"protocol": "TCP",
 								},
@@ -981,6 +1088,7 @@ func Test_getServiceImportDependencies(t *testing.T) {
 func Test_getAllDefaultDependenciesInterpreter(t *testing.T) {
 	expectedKinds := []schema.GroupVersionKind{
 		{Group: "apps", Version: "v1", Kind: "Deployment"},
+		{Group: "apps", Version: "v1", Kind: "ReplicaSet"},
 		{Group: "batch", Version: "v1", Kind: "Job"},
 		{Group: "batch", Version: "v1", Kind: "CronJob"},
 		{Group: "", Version: "v1", Kind: "Pod"},
@@ -1014,21 +1122,21 @@ func Test_getIngressDependencies(t *testing.T) {
 		{
 			name: "ingress with dependencies 2",
 			object: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "networking.k8s.io/v1",
 					"kind":       "Ingress",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "test-ingress",
 						"namespace": namespace,
 					},
-					"spec": map[string]interface{}{
-						"tls": []interface{}{
-							map[string]interface{}{
-								"hosts":      []interface{}{"foo1.*.bar.com"},
+					"spec": map[string]any{
+						"tls": []any{
+							map[string]any{
+								"hosts":      []any{"foo1.*.bar.com"},
 								"secretName": "cloud-secret",
 							},
-							map[string]interface{}{
-								"hosts":      []interface{}{"foo2.*.bar.com"},
+							map[string]any{
+								"hosts":      []any{"foo2.*.bar.com"},
 								"secretName": "test-secret",
 							},
 						},

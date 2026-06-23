@@ -79,7 +79,7 @@ kubectl:
   ##
   image:
     registry: docker.io
-    repository: bitnami/kubectl
+    repository: bitnamisecure/kubectl
     tag: latest
     ## Specify a imagePullPolicy, defaults to 'IfNotPresent'
     pullPolicy: IfNotPresent
@@ -193,6 +193,8 @@ scheduler:
     app: karmada-scheduler
   ## @param scheduler.replicaCount target replicas of the scheduler
   replicaCount: 1
+  ## @param scheduler.logVerbosity log verbosity level for the scheduler
+  logVerbosity: 2
   ## @param scheduler.podAnnotations annotations of the scheduler pods
   podAnnotations: {}
   ## @param scheduler.podLabels labels of the scheduler pods
@@ -245,6 +247,10 @@ scheduler:
   priorityClassName: "system-node-critical"
   ## @param scheduler.enableSchedulerEstimator enable scheduler estimator
   enableSchedulerEstimator: false
+  ## @param scheduler.enableEmptyWorkloadPropagation enable propagation of zero-replica workloads
+  enableEmptyWorkloadPropagation: false
+  ## @param scheduler.featureGates A set of key=value pairs that describe feature gates for karmada-scheduler
+  featureGates: {}
 
 ## webhook config
 webhook:
@@ -253,6 +259,8 @@ webhook:
     app: karmada-webhook
   ## @param webhook.replicaCount target replicas
   replicaCount: 1
+  ## @param webhook.logVerbosity log verbosity level for the webhook
+  logVerbosity: 2
   ## @param webhook.podAnnotations annotations of the webhook pods
   podAnnotations: {}
   ## @param webhook.podLabels labels of the webhook pods
@@ -299,11 +307,11 @@ webhook:
     rollingUpdate:
       maxUnavailable: 0
       maxSurge: 50%
-  ## @param apiServer.podDisruptionBudget
+  ## @param webhook.podDisruptionBudget
   podDisruptionBudget: *podDisruptionBudget
   ## @param webhook.priorityClassName the priority class name for the karmada-webhook
   priorityClassName: "system-node-critical"
-  ## @param featureGate to webhook
+  ## @param webhook.featureGates A set of key=value pairs that describe feature gates for karmada-webhook
   featureGates: {}
 
 ## controller manager config
@@ -313,6 +321,8 @@ controllerManager:
     app: karmada-controller-manager
   ## @param controllerManager.replicaCount target replicas of the karmada-controller-manager
   replicaCount: 1
+  ## @param controllerManager.logVerbosity log verbosity level for the controller manager
+  logVerbosity: 2
   ## @param controllerManager.podAnnotations annotations of the karmada-controller-manager pods
   podAnnotations: {}
   ## @param controllerManager.podLabels labels of the karmada-controller-manager pods
@@ -380,6 +390,8 @@ apiServer:
   serviceAnnotations: {}
   ## @param apiServer.replicaCount target replicas of the karmada-apiserver
   replicaCount: 1
+  ## @param apiServer.logVerbosity log verbosity level for the apiserver
+  logVerbosity: 2
   ## @param apiServer.podAnnotations annotations of the karmada-apiserver pods
   podAnnotations: {}
   ## @param apiServer.podLabels labels of the karmada-apiserver pods
@@ -393,7 +405,7 @@ apiServer:
   image:
     registry: registry.k8s.io
     repository: kube-apiserver
-    tag: "v1.31.3"
+    tag: "v1.35.2"
     ## Specify a imagePullPolicy, defaults to 'IfNotPresent'
     pullPolicy: IfNotPresent
     ## Optionally specify an array of imagePullSecrets.
@@ -467,6 +479,22 @@ apiServer:
     signingAlgs: ""
     usernameClaim: ""
     usernamePrefix: ""
+  ## @param apiServer.encryptionAtRest encryption at rest configuration
+  ## This feature enables Karmada API server encryption-at-rest by mounting a user-provided
+  ## Secret containing an EncryptionConfiguration file and passing --encryption-provider-config to karmada-apiserver.
+  ## SECURITY WARNING: Do NOT store encryption keys or config in Git or Helm values.
+  ## Use a secret management solution (Vault, External Secrets Operator, SealedSecrets, etc.) to provision the Secret.
+  encryptionAtRest:
+    ## @param apiServer.encryptionAtRest.enabled enable encryption at rest for karmada-apiserver
+    enabled: false
+    ## @param apiServer.encryptionAtRest.existingSecret reference to an existing Secret containing the encryption config
+    existingSecret:
+      ## @param apiServer.encryptionAtRest.existingSecret.name name of the existing Secret
+      name: ""
+      ## @param apiServer.encryptionAtRest.existingSecret.key key in the Secret that contains the EncryptionConfiguration YAML
+      key: "encryption-config.yaml"
+    ## @param apiServer.encryptionAtRest.configFile path where the encryption config file will be mounted in the container
+    configFile: "/etc/karmada/encryption/encryption-config.yaml"
 
 ## karmada aggregated apiserver config
 aggregatedApiServer:
@@ -475,6 +503,8 @@ aggregatedApiServer:
     app: karmada-aggregated-apiserver
   ## @param aggregatedApiServer.replicaCount target replicas of the karmada-aggregated-apiserver
   replicaCount: 1
+  ## @param aggregatedApiServer.logVerbosity log verbosity level for the aggregated apiserver
+  logVerbosity: 2
   ## @param aggregatedApiServer.podAnnotations annotations of the karmada-aggregated-apiserver pods
   podAnnotations: {}
   ## @param aggregatedApiServer.podLabels labels of the karmada-aggregated-apiserver pods
@@ -535,6 +565,8 @@ metricsAdapter:
     app: karmada-metrics-adapter
   ## @param metricsAadpter.replicaCount target replicas of the karmada-mertics-adapter
   replicaCount: 1
+  ## @param metricsAdapter.logVerbosity log verbosity level for the metrics adapter
+  logVerbosity: 2
   ## @param metricsAadpter.podAnnotations annotations of the karmada-mertics-adapter pods
   podAnnotations: {}
   ## @param metricsAadpter.podLabels labels of the karmada-mertics-adapter pods
@@ -595,6 +627,8 @@ kubeControllerManager:
     app: kube-controller-manager
   ## @param kubeControllerManager.replicaCount target replicas of the kube-controller-manager
   replicaCount: 1
+  ## @param kubeControllerManager.logVerbosity log verbosity level for the kube-controller-manager
+  logVerbosity: 2
   ## @param kubeControllerManager.podAnnotations annotations of the kube-controller-manager pods
   podAnnotations: {}
   ## @param kubeControllerManager.podLabels labels of the kube-controller-manager pods
@@ -608,7 +642,7 @@ kubeControllerManager:
   image:
     registry: registry.k8s.io
     repository: kube-controller-manager
-    tag: "v1.31.3"
+    tag: "v1.35.2"
     ## Specify a imagePullPolicy, defaults to 'IfNotPresent'
     pullPolicy: IfNotPresent
     ## Optionally specify an array of imagePullSecrets.
@@ -696,6 +730,8 @@ etcd:
         XXXXXXXXXXXXXXXXXXXXXXXXXXX
         -----END RSA PRIVATE KEY-----
   internal:
+    ## @param etcd.internal.logLevel log level for the internal etcd (debug, info, warn, error, panic, fatal)
+    logLevel: "info"
     ## @param etcd.internal.replicaCount target replicas
     replicaCount: 1
     ## @param image.registry etcd image registry
@@ -706,7 +742,7 @@ etcd:
     image:
       registry: registry.k8s.io
       repository: etcd
-      tag: "3.5.16-0"
+      tag: "3.6.6-0"
       ## Specify a imagePullPolicy, defaults to 'IfNotPresent'
       pullPolicy: IfNotPresent
     ## @param etcd.internal.storageType storage type for etcd data
@@ -767,6 +803,8 @@ agent:
     app: karmada-agent
   ## @param agent.replicaCount target replicas
   replicaCount: 1
+  ## @param agent.logVerbosity log verbosity level for the agent
+  logVerbosity: 2
   ## @param agent.podAnnotations annotations of the agent pods
   podAnnotations: {}
   ## @param agent.podLabels labels of the agent pods
@@ -848,6 +886,8 @@ schedulerEstimator:
   ## @param schedulerEstimator.labels labels of the scheduler-estimator deployment
   labels:
     app: karmada-scheduler-estimator
+  ## @param schedulerEstimator.logVerbosity log verbosity level for the scheduler estimator
+  logVerbosity: 2
   ## @param schedulerEstimator.podAnnotations annotations of the scheduler-estimator pods
   podAnnotations: {}
   ## @param schedulerEstimator.podLabels labels of the scheduler-estimator pods
@@ -909,6 +949,8 @@ descheduler:
     app: karmada-descheduler
   ## @param descheduler.replicaCount target replicas of the descheduler
   replicaCount: 2
+  ## @param descheduler.logVerbosity log verbosity level for the descheduler
+  logVerbosity: 2
   ## @param descheduler.podAnnotations annotations of the descheduler pods
   podAnnotations: {}
   ## @param descheduler.podLabels labels of the descheduler pods
@@ -969,6 +1011,8 @@ search:
     app: karmada-search
   ## @param search.replicaCount target replicas
   replicaCount: 2
+  ## @param search.logVerbosity log verbosity level for the search
+  logVerbosity: 2
   ## @param search.podAnnotations annotations of the search pods
   podAnnotations: {}
   ## @param search.podLabels labels of the search pods

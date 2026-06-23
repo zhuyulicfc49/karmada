@@ -89,7 +89,7 @@ func (c *MCSController) Reconcile(ctx context.Context, req controllerruntime.Req
 	defer func() {
 		if err != nil {
 			_ = c.updateMultiClusterServiceStatus(ctx, mcs, metav1.ConditionFalse, "ServiceAppliedFailed", err.Error())
-			c.EventRecorder.Eventf(mcs, corev1.EventTypeWarning, events.EventReasonSyncServiceFailed, err.Error())
+			c.EventRecorder.Eventf(mcs, corev1.EventTypeWarning, events.EventReasonSyncServiceFailed, "%s", err.Error())
 			return
 		}
 		_ = c.updateMultiClusterServiceStatus(ctx, mcs, metav1.ConditionTrue, "ServiceAppliedSucceed", "Service is propagated to target clusters.")
@@ -288,7 +288,8 @@ func (c *MCSController) propagateMultiClusterService(ctx context.Context, mcs *n
 				"Provider cluster %s is not ready, skip to propagate MultiClusterService", clusterName)
 			continue
 		}
-		if !helper.IsAPIEnabled(clusterObj.Status.APIEnablements, util.EndpointSliceGVK.GroupVersion().String(), util.EndpointSliceGVK.Kind) {
+
+		if clusterObj.APIEnablement(util.EndpointSliceGVK) == clusterv1alpha1.APIDisabled {
 			c.EventRecorder.Eventf(mcs, corev1.EventTypeWarning, events.EventReasonAPIIncompatible, "Provider cluster %s does not support EndpointSlice", clusterName)
 			continue
 		}

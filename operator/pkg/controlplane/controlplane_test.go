@@ -15,13 +15,12 @@ package controlplane
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	fakeclientset "k8s.io/client-go/kubernetes/fake"
-	coretesting "k8s.io/client-go/testing"
-	"k8s.io/utils/ptr"
 
 	operatorv1alpha1 "github.com/karmada-io/karmada/operator/pkg/apis/operator/v1alpha1"
 	"github.com/karmada-io/karmada/operator/pkg/constants"
@@ -43,7 +42,7 @@ func TestEnsureAllControlPlaneComponents(t *testing.T) {
 					ImageRepository: "registry.k8s.io/kube-controller-manager",
 					ImageTag:        "latest",
 				},
-				Replicas:        ptr.To[int32](replicas),
+				Replicas:        new(replicas),
 				Annotations:     annotations,
 				Labels:          labels,
 				Resources:       corev1.ResourceRequirements{},
@@ -57,7 +56,7 @@ func TestEnsureAllControlPlaneComponents(t *testing.T) {
 					ImageRepository: "docker.io/karmada/karmada-controller-manager",
 					ImageTag:        "latest",
 				},
-				Replicas:        ptr.To[int32](replicas),
+				Replicas:        new(replicas),
 				Annotations:     annotations,
 				Labels:          labels,
 				ImagePullPolicy: imagePullPolicy,
@@ -70,7 +69,7 @@ func TestEnsureAllControlPlaneComponents(t *testing.T) {
 					ImageRepository: "docker.io/karmada/karmada-scheduler",
 					ImageTag:        "latest",
 				},
-				Replicas:        ptr.To[int32](replicas),
+				Replicas:        new(replicas),
 				Annotations:     annotations,
 				Labels:          labels,
 				Resources:       corev1.ResourceRequirements{},
@@ -84,7 +83,7 @@ func TestEnsureAllControlPlaneComponents(t *testing.T) {
 					ImageRepository: "docker.io/karmada/karmada-descheduler",
 					ImageTag:        "latest",
 				},
-				Replicas:        ptr.To[int32](replicas),
+				Replicas:        new(replicas),
 				Annotations:     annotations,
 				Labels:          labels,
 				Resources:       corev1.ResourceRequirements{},
@@ -94,7 +93,7 @@ func TestEnsureAllControlPlaneComponents(t *testing.T) {
 		},
 	}
 
-	fakeClient := fakeclientset.NewSimpleClientset()
+	fakeClient := fakeclientset.NewClientset()
 
 	components := []string{
 		constants.KubeControllerManagerComponent,
@@ -111,19 +110,30 @@ func TestEnsureAllControlPlaneComponents(t *testing.T) {
 	}
 
 	actions := fakeClient.Actions()
-	if len(actions) != len(components) {
-		t.Fatalf("expected %d actions, but got %d", len(components), len(actions))
+	// We now create both deployments and PDBs. so expect 2 actions per component
+	expectedActions := len(components) * 2
+	if len(actions) != expectedActions {
+		t.Fatalf("expected %d actions, but got %d", expectedActions, len(actions))
 	}
 
+	// Check that we have both deployments and PDBs
+	deploymentCount := 0
+	pdbCount := 0
 	for _, action := range actions {
-		createAction, ok := action.(coretesting.CreateAction)
-		if !ok {
-			t.Errorf("expected CreateAction, but got %T", action)
+		if action.GetResource().Resource == "deployments" {
+			deploymentCount++
+		} else if action.GetResource().Resource == "poddisruptionbudgets" {
+			pdbCount++
 		}
+	}
 
-		if createAction.GetResource().Resource != "deployments" {
-			t.Errorf("expected action on 'deployments', but got '%s'", createAction.GetResource().Resource)
-		}
+	// Each component has 1 deployment actions and 1 PDB action
+	if deploymentCount != len(components) {
+		t.Errorf("expected %d deployment actions (create + get for each component), but got %d", len(components), deploymentCount)
+	}
+
+	if pdbCount != len(components) {
+		t.Errorf("expected %d PDB actions, but got %d", len(components), pdbCount)
 	}
 }
 
@@ -143,7 +153,7 @@ func TestGetKubeControllerManagerManifest(t *testing.T) {
 				ImageRepository: image,
 				ImageTag:        imageTag,
 			},
-			Replicas:          ptr.To[int32](replicas),
+			Replicas:          new(replicas),
 			Annotations:       annotations,
 			Labels:            labels,
 			Resources:         corev1.ResourceRequirements{},
@@ -192,7 +202,7 @@ func TestGetKarmadaControllerManagerManifest(t *testing.T) {
 				ImageRepository: image,
 				ImageTag:        imageTag,
 			},
-			Replicas:          ptr.To[int32](replicas),
+			Replicas:          new(replicas),
 			Annotations:       annotations,
 			Labels:            labels,
 			ImagePullPolicy:   imagePullPolicy,
@@ -249,7 +259,7 @@ func TestGetKarmadaSchedulerManifest(t *testing.T) {
 				ImageRepository: image,
 				ImageTag:        imageTag,
 			},
-			Replicas:          ptr.To[int32](replicas),
+			Replicas:          new(replicas),
 			Annotations:       annotations,
 			Labels:            labels,
 			Resources:         corev1.ResourceRequirements{},
@@ -310,7 +320,7 @@ func TestGetKarmadaDeschedulerManifest(t *testing.T) {
 				ImageRepository: image,
 				ImageTag:        imageTag,
 			},
-			Replicas:          ptr.To[int32](replicas),
+			Replicas:          new(replicas),
 			Annotations:       annotations,
 			Labels:            labels,
 			Resources:         corev1.ResourceRequirements{},
@@ -457,10 +467,5 @@ func verifyFeatureGates(container *corev1.Container, featureGates map[string]boo
 
 // contains check if a slice contains a specific string.
 func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(slice, item)
 }

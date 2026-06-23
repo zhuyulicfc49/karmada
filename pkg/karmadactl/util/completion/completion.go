@@ -31,6 +31,7 @@ import (
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/cli-runtime/pkg/genericiooptions"
 	"k8s.io/cli-runtime/pkg/printers"
+	"k8s.io/client-go/rest"
 	"k8s.io/kubectl/pkg/cmd/apiresources"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
 	"k8s.io/kubectl/pkg/polymorphichelpers"
@@ -42,6 +43,20 @@ import (
 )
 
 var factory util.Factory
+
+type timeoutRESTClientGetter struct {
+	genericclioptions.RESTClientGetter
+	timeout time.Duration
+}
+
+func (g *timeoutRESTClientGetter) ToRESTConfig() (*rest.Config, error) {
+	cfg, err := g.RESTClientGetter.ToRESTConfig()
+	if err != nil {
+		return nil, err
+	}
+	cfg.Timeout = g.timeout
+	return cfg, nil
+}
 
 // SetFactoryForCompletion Store the factory which is needed by the completion functions.
 // Not all commands have access to the factory, so cannot pass it to the completion functions.
@@ -198,8 +213,8 @@ func CompGetFromTemplate(template *string, f util.Factory, cmd *cobra.Command, n
 		return nil
 	}
 	var comps []string
-	resources := strings.Split(buf.String(), " ")
-	for _, res := range resources {
+	resources := strings.SplitSeq(buf.String(), " ")
+	for res := range resources {
 		if res != "" && strings.HasPrefix(res, toComplete) {
 			comps = append(comps, res)
 		}
@@ -251,15 +266,15 @@ func compGetResourceList(restClientGetter genericclioptions.RESTClientGetter, cm
 	// TODO: Using karmadactlapiresources.CommandAPIResourcesOptions to adapt to the operation scope.
 	o := apiresources.NewAPIResourceOptions(streams)
 
+	// Get the list of resources
+	o.PrintFlags.OutputFormat = new("name")
+	o.Cached = true
+	o.Verbs = []string{"get"}
+	restClientGetter = &timeoutRESTClientGetter{RESTClientGetter: restClientGetter, timeout: 5 * time.Second}
+
 	if err := o.Complete(restClientGetter, cmd, nil); err != nil {
 		return nil
 	}
-
-	// Get the list of resources
-	o.Output = "name"
-	o.Cached = true
-	o.Verbs = []string{"get"}
-	// TODO:Should set --request-timeout=5s
 
 	// Ignore errors as the output may still be valid
 	if err := o.RunAPIResources(); err != nil {
@@ -277,8 +292,8 @@ func compGetResourceList(restClientGetter genericclioptions.RESTClientGetter, cm
 		suffix = toComplete[lastIdx+1:]
 	}
 	var comps []string
-	resources := strings.Split(buf.String(), "\n")
-	for _, res := range resources {
+	resources := strings.SplitSeq(buf.String(), "\n")
+	for res := range resources {
 		if res != "" && strings.HasPrefix(res, suffix) {
 			comps = append(comps, fmt.Sprintf("%s%s", prefix, res))
 		}

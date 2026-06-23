@@ -208,7 +208,7 @@ func TestWaitForPods(t *testing.T) {
 			name: "WaitForPods_WaitingForAllKarmadaAPIServerPods_Timeout",
 			karmadaWriter: &KarmadaWaiter{
 				karmadaConfig: &rest.Config{},
-				client:        fakeclientset.NewSimpleClientset(),
+				client:        fakeclientset.NewClientset(),
 				timeout:       time.Second,
 			},
 			prep: func(client clientset.Interface) error {
@@ -224,7 +224,7 @@ func TestWaitForPods(t *testing.T) {
 			name: "WaitForPods_WaitingForAllKarmadaAPIServerPods_AllAreUpAndRunning",
 			karmadaWriter: &KarmadaWaiter{
 				karmadaConfig: &rest.Config{},
-				client:        fakeclientset.NewSimpleClientset(),
+				client:        fakeclientset.NewClientset(),
 				timeout:       time.Second * 2,
 			},
 			prep: func(client clientset.Interface) error {
@@ -275,7 +275,7 @@ func TestWaitForSomePods(t *testing.T) {
 			name: "WaitForSomePods_WaitingForSomeKarmadaAPIServerPods_Timeout",
 			karmadaWriter: &KarmadaWaiter{
 				karmadaConfig: &rest.Config{},
-				client:        fakeclientset.NewSimpleClientset(),
+				client:        fakeclientset.NewClientset(),
 				timeout:       time.Second,
 			},
 			prep: func(client clientset.Interface) error {
@@ -291,7 +291,7 @@ func TestWaitForSomePods(t *testing.T) {
 			name: "WaitForSomePods_WaitingForSomeKarmadaAPIServerPods_SomeAreUpAndRunning",
 			karmadaWriter: &KarmadaWaiter{
 				karmadaConfig: &rest.Config{},
-				client:        fakeclientset.NewSimpleClientset(),
+				client:        fakeclientset.NewClientset(),
 				timeout:       time.Millisecond,
 			},
 			prep: func(client clientset.Interface) error {

@@ -18,7 +18,10 @@ package binding
 
 import (
 	"context"
+	"fmt"
+	"slices"
 	"strconv"
+	"time"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -41,6 +44,11 @@ import (
 	"github.com/karmada-io/karmada/pkg/util/overridemanager"
 )
 
+const (
+	// requeueIntervalForDirectlyPurge is the requeue interval for binding when there are works in clusters with PurgeMode 'Directly'.
+	requeueIntervalForDirectlyPurge = 5 * time.Second
+)
+
 // ensureWork ensure Work to be created or updated.
 func ensureWork(
 	ctx context.Context, c client.Client, resourceInterpreter resourceinterpreter.ResourceInterpreter, workload *unstructured.Unstructured,
@@ -51,11 +59,15 @@ func ensureWork(
 	var err error
 	var errs []error
 
-	var jobCompletions []workv1alpha2.TargetCluster
+	var jobCompletionsMap map[string]int32
 	if workload.GetKind() == util.JobKind && needReviseJobCompletions(bindingSpec.Replicas, bindingSpec.Placement) {
+		var jobCompletions []workv1alpha2.TargetCluster
 		jobCompletions, err = divideReplicasByJobCompletions(workload, targetClusters)
 		if err != nil {
 			return err
+		}
+		if len(jobCompletions) > 0 {
+			jobCompletionsMap = buildJobCompletionsMap(jobCompletions)
 		}
 	}
 
@@ -71,7 +83,7 @@ func ensureWork(
 		// This rule applies regardless of whether the workload distribution mode is "Divided" or "Duplicated".
 		// Failing to do so could allow workloads to bypass the quota checks performed by the scheduler
 		// (especially during scale-up operations) or skip queue validation when scheduling is suspended.
-		if needReviseReplicas(bindingSpec.Replicas) {
+		if bindingSpec.IsWorkload() {
 			if resourceInterpreter.HookEnabled(clonedWorkload.GroupVersionKind(), configv1alpha1.InterpreterOperationReviseReplica) {
 				clonedWorkload, err = resourceInterpreter.ReviseReplica(clonedWorkload, int64(targetCluster.Replicas))
 				if err != nil {
@@ -83,16 +95,8 @@ func ensureWork(
 			}
 		}
 
-		// jobSpec.Completions specifies the desired number of successfully finished pods the job should be run with.
-		// When the replica scheduling policy is set to "divided", jobSpec.Completions should also be divided accordingly.
-		// The weight assigned to each cluster roughly equals that cluster's jobSpec.Parallelism value. This approach helps
-		// balance the execution time of the job across member clusters.
-		if len(jobCompletions) > 0 {
-			// Set allocated completions for Job only when the '.spec.completions' field not omitted from resource template.
-			// For jobs running with a 'work queue' usually leaves '.spec.completions' unset, in that case we skip
-			// setting this field as well.
-			// Refer to: https://kubernetes.io/docs/concepts/workloads/controllers/job/#parallel-jobs.
-			if err = helper.ApplyReplica(clonedWorkload, int64(jobCompletions[i].Replicas), util.CompletionsField); err != nil {
+		if jobCompletionsMap != nil {
+			if err = applyJobCompletions(clonedWorkload, targetCluster.Name, jobCompletionsMap); err != nil {
 				klog.ErrorS(err, "Failed to apply Completions for workload in cluster.",
 					"workloadKind", clonedWorkload.GetKind(), "workloadNamespace", clonedWorkload.GetNamespace(),
 					"workloadName", clonedWorkload.GetName(), "cluster", targetCluster.Name)
@@ -151,6 +155,38 @@ func ensureWork(
 	return errors.NewAggregate(errs)
 }
 
+// buildJobCompletionsMap converts a TargetCluster slice into a cluster-name-keyed
+// completions map so callers can look up per-cluster completions by name.
+func buildJobCompletionsMap(completions []workv1alpha2.TargetCluster) map[string]int32 {
+	m := make(map[string]int32, len(completions))
+	for _, jc := range completions {
+		m[jc.Name] = jc.Replicas
+	}
+	return m
+}
+
+// applyJobCompletions applies job completions to the workload.
+// JobSpec.Completions specifies the desired number of successfully finished pods the job should be run with.
+// When the replica scheduling policy is set to "divided", JobSpec.Completions should also be divided accordingly.
+// The weight assigned to each cluster roughly equals that cluster's JobSpec.Parallelism value. This approach helps
+// balance the execution time of the job across member clusters.
+func applyJobCompletions(workload *unstructured.Unstructured, clusterName string, completionsMap map[string]int32) error {
+	completions, ok := completionsMap[clusterName]
+	if !ok {
+		return fmt.Errorf("no completions found for cluster %s", clusterName)
+	}
+
+	// Set allocated completions for Job only when the '.spec.completions' field not omitted from resource template.
+	// For jobs running with a 'work queue' usually leaves '.spec.completions' unset, in that case we skip
+	// setting this field as well.
+	// Refer to: https://kubernetes.io/docs/concepts/workloads/controllers/job/#parallel-jobs.
+	if err := helper.ApplyReplica(workload, int64(completions), util.CompletionsField); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func getBindingSpec(binding metav1.Object, scope apiextensionsv1.ResourceScope) workv1alpha2.ResourceBindingSpec {
 	var bindingSpec workv1alpha2.ResourceBindingSpec
 	switch scope {
@@ -171,7 +207,7 @@ func getBindingSpec(binding metav1.Object, scope apiextensionsv1.ResourceScope) 
 //  2. If consecutive failovers occur, for example, an application is migrated form clusterA
 //     to clusterB and then to clusterC, the PreservedLabelState before the last failover is
 //     used for injection. If the PreservedLabelState is empty, the injection is skipped.
-//  3. The injection operation is performed only when PurgeMode is set to Immediately.
+//  3. The injection operation is performed only when PurgeMode is set to Immediately or Directly.
 func injectReservedLabelState(bindingSpec workv1alpha2.ResourceBindingSpec, moveToCluster workv1alpha2.TargetCluster, workload *unstructured.Unstructured, clustersLen int) *unstructured.Unstructured {
 	if clustersLen > 1 {
 		return workload
@@ -182,7 +218,10 @@ func injectReservedLabelState(bindingSpec workv1alpha2.ResourceBindingSpec, move
 	}
 	targetEvictionTask := bindingSpec.GracefulEvictionTasks[len(bindingSpec.GracefulEvictionTasks)-1]
 
-	if targetEvictionTask.PurgeMode != policyv1alpha1.Immediately {
+	//nolint:staticcheck
+	// disable `deprecation` check for backward compatibility.
+	if targetEvictionTask.PurgeMode != policyv1alpha1.Immediately &&
+		targetEvictionTask.PurgeMode != policyv1alpha1.PurgeModeDirectly {
 		return workload
 	}
 
@@ -314,14 +353,10 @@ func divideReplicasByJobCompletions(workload *unstructured.Unstructured, cluster
 	}
 
 	if found {
-		targetClusters = helper.SpreadReplicasByTargetClusters(int32(completions), clusters, nil) // #nosec G115: integer overflow conversion int64 -> int32
+		targetClusters = helper.SpreadReplicasByTargetClusters(int32(completions), clusters, nil, workload.GetUID()) // #nosec G115: integer overflow conversion int64 -> int32
 	}
 
 	return targetClusters, nil
-}
-
-func needReviseReplicas(replicas int32) bool {
-	return replicas > 0
 }
 
 func needReviseJobCompletions(replicas int32, placement *policyv1alpha1.Placement) bool {
@@ -336,11 +371,8 @@ func shouldSuspendDispatching(suspension *workv1alpha2.Suspension, targetCluster
 	suspendDispatching := ptr.Deref(suspension.Dispatching, false)
 
 	if !suspendDispatching && suspension.DispatchingOnClusters != nil {
-		for _, cluster := range suspension.DispatchingOnClusters.ClusterNames {
-			if cluster == targetCluster.Name {
-				suspendDispatching = true
-				break
-			}
+		if slices.Contains(suspension.DispatchingOnClusters.ClusterNames, targetCluster.Name) {
+			suspendDispatching = true
 		}
 	}
 	return suspendDispatching

@@ -63,7 +63,7 @@ spec:
             - --service-account-private-key-file=/etc/karmada/pki/karmada.key
             - --service-cluster-ip-range={{ .Values.kubeControllerManager.serviceClusterIPRange }}
             - --use-service-account-credentials=true
-            - --v=5
+            - --v={{ .Values.kubeControllerManager.logVerbosity }}
           image: {{ template "karmada.kubeControllerManager.image" . }}
           livenessProbe:
             failureThreshold: 8

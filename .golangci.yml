@@ -19,6 +19,7 @@ linters:
     - gocyclo
     - gosec
     - misspell
+    - modernize
     - revive
     - whitespace
   settings:
@@ -28,9 +29,19 @@ linters:
           deny:
             - pkg: io/ioutil
               desc: 'replaced by io and os packages since Go 1.16: https://tip.golang.org/doc/go1.16#ioutil'
+            - pkg: gopkg.in/yaml.v3
+              desc: 'archived since April 2, 2025; use sigs.k8s.io/yaml instead for better Kubernetes object handling'
     gocyclo:
       # minimal cyclomatic complexity to report
       min-complexity: 15
+    modernize:
+      disable:
+        # Suggest replacing omitempty with omitzero for struct fields.
+        # Disable this check for now since it introduces too many changes in our existing codebase.
+        # It suggests changing metav1.ObjectMeta json tags from "metadata,omitempty" to "metadata,omitzero",
+        # which is not desired as it may break existing behavior.
+        # See https://pkg.go.dev/golang.org/x/tools/go/analysis/passes/modernize#hdr-Analyzer_omitzero for more details.
+        - omitzero
     revive:
       rules:
         # Disable if-return as it is too strict and not always useful.
@@ -59,6 +70,13 @@ linters:
         - name: indent-error-flow
         - name: unreachable-code
         - name: var-naming
+          arguments:
+            - []
+            - []
+            # Revive's package-name lint is too strict for our usage. We follow Effective Go instead:
+            # keep package names short and accept non-unique names since the package name is only the default import name.
+            # For collisions, we standardize aliases in hack/.import-aliases. Guidance: https://go.dev/doc/effective_go#package-names
+            - - skip-package-name-checks: true
         - name: redefines-builtin-id
         - name: unused-parameter
         - name: context-as-argument
@@ -107,3 +125,12 @@ formatters:
       - (^|/)vendor($|/)
       - (^|/)third_party($|/)
       - pkg/util/lifted
+issues:
+  # Maximum issues count per one linter.
+  # Set to 0 to disable.
+  # Default: 50
+  max-issues-per-linter: 0
+  # Maximum count of issues with the same text.
+  # Set to 0 to disable.
+  # Default: 3
+  max-same-issues: 0

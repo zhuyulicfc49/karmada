@@ -28,6 +28,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	configv1alpha1 "github.com/karmada-io/karmada/pkg/apis/config/v1alpha1"
+	workv1alpha2 "github.com/karmada-io/karmada/pkg/apis/work/v1alpha2"
 )
 
 func TestCreateResourceInterpreterContext(t *testing.T) {
@@ -40,10 +41,10 @@ func TestCreateResourceInterpreterContext(t *testing.T) {
 
 	attributes := &Attributes{
 		Object: &unstructured.Unstructured{
-			Object: map[string]interface{}{
+			Object: map[string]any{
 				"apiVersion": testAPIVersion,
 				"kind":       testKind,
-				"metadata": map[string]interface{}{
+				"metadata": map[string]any{
 					"name":      testName,
 					"namespace": testNamespace,
 				},
@@ -127,10 +128,10 @@ func TestCreateV1alpha1ResourceInterpreterContext(t *testing.T) {
 			name: "basic deployment object",
 			attributes: &Attributes{
 				Object: &unstructured.Unstructured{
-					Object: map[string]interface{}{
+					Object: map[string]any{
 						"apiVersion": "apps/v1",
 						"kind":       "Deployment",
-						"metadata": map[string]interface{}{
+						"metadata": map[string]any{
 							"name":      testName,
 							"namespace": testNamespace,
 						},
@@ -155,19 +156,19 @@ func TestCreateV1alpha1ResourceInterpreterContext(t *testing.T) {
 			name: "with observed object",
 			attributes: &Attributes{
 				Object: &unstructured.Unstructured{
-					Object: map[string]interface{}{
+					Object: map[string]any{
 						"apiVersion": "v1",
 						"kind":       "Pod",
-						"metadata": map[string]interface{}{
+						"metadata": map[string]any{
 							"name": "test-pod",
 						},
 					},
 				},
 				ObservedObj: &unstructured.Unstructured{
-					Object: map[string]interface{}{
+					Object: map[string]any{
 						"apiVersion": "v1",
 						"kind":       "Pod",
-						"metadata": map[string]interface{}{
+						"metadata": map[string]any{
 							"name": "test-pod-observed",
 						},
 					},
@@ -184,10 +185,10 @@ func TestCreateV1alpha1ResourceInterpreterContext(t *testing.T) {
 			name: "nil observed object",
 			attributes: &Attributes{
 				Object: &unstructured.Unstructured{
-					Object: map[string]interface{}{
+					Object: map[string]any{
 						"apiVersion": "v1",
 						"kind":       "ConfigMap",
-						"metadata": map[string]interface{}{
+						"metadata": map[string]any{
 							"name": "test-configmap",
 						},
 					},
@@ -205,7 +206,7 @@ func TestCreateV1alpha1ResourceInterpreterContext(t *testing.T) {
 			name: "zero values in attributes",
 			attributes: &Attributes{
 				Object: &unstructured.Unstructured{
-					Object: map[string]interface{}{
+					Object: map[string]any{
 						"apiVersion": "v1",
 						"kind":       "Service",
 					},
@@ -252,7 +253,7 @@ func TestVerifyResourceInterpreterContext(t *testing.T) {
 				Response: &configv1alpha1.ResourceInterpreterResponse{
 					UID:        uid,
 					Successful: true,
-					Replicas:   ptr.To(int32(3)),
+					Replicas:   new(int32(3)),
 				},
 			},
 			wantError:   false,
@@ -271,7 +272,7 @@ func TestVerifyResourceInterpreterContext(t *testing.T) {
 				Response: &configv1alpha1.ResourceInterpreterResponse{
 					UID:        "wrong-uid",
 					Successful: true,
-					Replicas:   ptr.To(int32(3)),
+					Replicas:   new(int32(3)),
 				},
 			},
 			wantError: true,
@@ -289,7 +290,7 @@ func TestVerifyResourceInterpreterContext(t *testing.T) {
 		{
 			name: "invalid context type",
 			context: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "v1",
 					"kind":       "InvalidType",
 				},
@@ -324,6 +325,17 @@ func TestVerifyResourceInterpreterContextByOperation(t *testing.T) {
 		invalidOpType  = "invalid-operation"
 	)
 
+	testComponents := []workv1alpha2.Component{
+		{
+			Name:     "test-component1",
+			Replicas: int32(1),
+		},
+		{
+			Name:     "test-component2",
+			Replicas: int32(2),
+		},
+	}
+
 	tests := []struct {
 		name          string
 		operation     configv1alpha1.InterpreterOperation
@@ -355,6 +367,29 @@ func TestVerifyResourceInterpreterContextByOperation(t *testing.T) {
 			errorContains: "nil response.replicas",
 		},
 		{
+			name:      "interpret component with valid response",
+			operation: configv1alpha1.InterpreterOperationInterpretComponent,
+			response: &configv1alpha1.ResourceInterpreterResponse{
+				UID:        types.UID(testUID),
+				Successful: true,
+				Components: testComponents,
+			},
+			checkFunc: func(t *testing.T, attr *ResponseAttributes) {
+				assert.Equal(t, testComponents, attr.Components)
+			},
+		},
+		{
+			name:      "interpret component with nil components",
+			operation: configv1alpha1.InterpreterOperationInterpretComponent,
+			response: &configv1alpha1.ResourceInterpreterResponse{
+				UID:        types.UID(testUID),
+				Successful: true,
+			},
+			checkFunc: func(t *testing.T, attr *ResponseAttributes) {
+				assert.Nil(t, attr.Components)
+			},
+		},
+		{
 			name:      "interpret dependency with valid response",
 			operation: configv1alpha1.InterpreterOperationInterpretDependency,
 			response: &configv1alpha1.ResourceInterpreterResponse{
@@ -383,9 +418,9 @@ func TestVerifyResourceInterpreterContextByOperation(t *testing.T) {
 				Successful: true,
 				RawStatus: &runtime.RawExtension{
 					Object: &unstructured.Unstructured{
-						Object: map[string]interface{}{
+						Object: map[string]any{
 							"available": true,
-							"replicas": map[string]interface{}{
+							"replicas": map[string]any{
 								"ready":     3,
 								"total":     5,
 								"updated":   2,
@@ -399,7 +434,7 @@ func TestVerifyResourceInterpreterContextByOperation(t *testing.T) {
 				require.NotNil(t, attr.RawStatus)
 				obj := attr.RawStatus.Object.(*unstructured.Unstructured)
 				assert.True(t, obj.Object["available"].(bool))
-				replicas := obj.Object["replicas"].(map[string]interface{})
+				replicas := obj.Object["replicas"].(map[string]any)
 				assert.Equal(t, 3, replicas["ready"])
 			},
 		},
@@ -419,7 +454,7 @@ func TestVerifyResourceInterpreterContextByOperation(t *testing.T) {
 			response: &configv1alpha1.ResourceInterpreterResponse{
 				UID:        types.UID(testUID),
 				Successful: true,
-				Healthy:    ptr.To(true),
+				Healthy:    new(true),
 			},
 			checkFunc: func(t *testing.T, attr *ResponseAttributes) {
 				require.NotNil(t, attr.Healthy)
@@ -439,7 +474,7 @@ func TestVerifyResourceInterpreterContextByOperation(t *testing.T) {
 				assert.NotEmpty(t, attr.Patch)
 				assert.Equal(t, configv1alpha1.PatchTypeJSONPatch, attr.PatchType)
 				// Verify patch is valid JSON
-				var patchObj interface{}
+				var patchObj any
 				err := json.Unmarshal(attr.Patch, &patchObj)
 				assert.NoError(t, err)
 			},

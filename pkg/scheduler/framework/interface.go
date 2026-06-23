@@ -28,6 +28,8 @@ import (
 	"errors"
 	"strings"
 
+	"k8s.io/client-go/tools/cache"
+
 	clusterv1alpha1 "github.com/karmada-io/karmada/pkg/apis/cluster/v1alpha1"
 	workv1alpha2 "github.com/karmada-io/karmada/pkg/apis/work/v1alpha2"
 )
@@ -44,9 +46,8 @@ const (
 // Configured plugins are called at specified points in a scheduling context.
 type Framework interface {
 
-	// RunFilterPlugins runs the set of configured Filter plugins for resources on
-	// the given cluster.
-	RunFilterPlugins(ctx context.Context, bindingSpec *workv1alpha2.ResourceBindingSpec, bindingStatus *workv1alpha2.ResourceBindingStatus, cluster *clusterv1alpha1.Cluster) *Result
+	// RunFilterPlugins runs the set of configured Filter plugins for resources on the given cluster.
+	RunFilterPlugins(filterCtx *FilterContext) *Result
 
 	// RunScorePlugins runs the set of configured Score plugins, it returns a map of plugin names to scores
 	RunScorePlugins(ctx context.Context, spec *workv1alpha2.ResourceBindingSpec, clusters []*clusterv1alpha1.Cluster) (PluginToClusterScores, *Result)
@@ -57,12 +58,43 @@ type Plugin interface {
 	Name() string
 }
 
+// FilterContext encapsulates all parameters needed for Filter plugins.
+// It groups scheduling context data in a single struct for flexibility and extensibility.
+type FilterContext struct {
+	// Context is the scheduling context.
+	Context context.Context
+
+	// BindingSpec contains the resource binding specification.
+	BindingSpec *workv1alpha2.ResourceBindingSpec
+
+	// BindingStatus contains the resource binding status.
+	BindingStatus *workv1alpha2.ResourceBindingStatus
+
+	// Cluster is the cluster being evaluated.
+	Cluster *clusterv1alpha1.Cluster
+
+	// ResourceBindingIndexer provides access to ResourceBindings for advanced scheduling logic.
+	ResourceBindingIndexer cache.Indexer
+
+	// AssigningBindings stores the ResourceBindings that are in the "assigning" state.
+	AssigningBindings map[string]*workv1alpha2.ResourceBinding
+}
+
 // FilterPlugin is an interface for filter plugins. These filters are used to filter out clusters
 // that are not fit for the resource.
 type FilterPlugin interface {
 	Plugin
 	// Filter is called by the scheduling framework.
 	Filter(ctx context.Context, bindingSpec *workv1alpha2.ResourceBindingSpec, bindingStatus *workv1alpha2.ResourceBindingStatus, cluster *clusterv1alpha1.Cluster) *Result
+}
+
+// FilterPluginWithContext is an extended interface for filter plugins that use FilterContext.
+// Plugins implementing this interface can benefit from better parameter extensibility.
+// The framework will automatically detect and use this interface if implemented.
+type FilterPluginWithContext interface {
+	Plugin
+	// FilterWithContext is called by the scheduling framework with consolidated parameters.
+	FilterWithContext(filterCtx *FilterContext) *Result
 }
 
 // Result indicates the result of running a plugin. It consists of a code, a

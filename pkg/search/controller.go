@@ -48,7 +48,6 @@ import (
 	"github.com/karmada-io/karmada/pkg/util/fedinformer"
 	"github.com/karmada-io/karmada/pkg/util/fedinformer/genericmanager"
 	"github.com/karmada-io/karmada/pkg/util/gclient"
-	"github.com/karmada-io/karmada/pkg/util/helper"
 	"github.com/karmada-io/karmada/pkg/util/restmapper"
 )
 
@@ -65,11 +64,12 @@ func (c *clusterRegistry) unregistry() bool {
 
 // Controller ResourceRegistry controller
 type Controller struct {
-	restConfig      *rest.Config
-	restMapper      meta.RESTMapper
-	informerFactory informerfactory.SharedInformerFactory
-	clusterLister   clusterlister.ClusterLister
-	queue           workqueue.TypedRateLimitingInterface[any]
+	restConfig          *rest.Config
+	restMapper          meta.RESTMapper
+	informerFactory     informerfactory.SharedInformerFactory
+	clusterLister       clusterlister.ClusterLister
+	queue               workqueue.TypedRateLimitingInterface[any]
+	clusterClientOption *util.ClientOption
 
 	clusterRegistry sync.Map
 
@@ -77,16 +77,17 @@ type Controller struct {
 }
 
 // NewController returns a new ResourceRegistry controller
-func NewController(restConfig *rest.Config, factory informerfactory.SharedInformerFactory, restMapper meta.RESTMapper) (*Controller, error) {
+func NewController(restConfig *rest.Config, factory informerfactory.SharedInformerFactory, restMapper meta.RESTMapper, clusterClientOption *util.ClientOption) (*Controller, error) {
 	clusterLister := factory.Cluster().V1alpha1().Clusters().Lister()
 	queue := workqueue.NewTypedRateLimitingQueue[any](workqueue.DefaultTypedControllerRateLimiter[any]())
 
 	c := &Controller{
-		restConfig:      restConfig,
-		informerFactory: factory,
-		clusterLister:   clusterLister,
-		queue:           queue,
-		restMapper:      restMapper,
+		restConfig:          restConfig,
+		informerFactory:     factory,
+		clusterLister:       clusterLister,
+		queue:               queue,
+		clusterClientOption: clusterClientOption,
+		restMapper:          restMapper,
 
 		InformerManager: genericmanager.GetInstance(),
 	}
@@ -134,8 +135,6 @@ func (c *Controller) Start(ctx context.Context) {
 
 	defer runtime.HandleCrash()
 
-	c.informerFactory.WaitForCacheSync(ctx.Done())
-
 	go wait.Until(c.worker, time.Second, ctx.Done())
 
 	go func() {
@@ -172,7 +171,7 @@ func (c *Controller) cacheNext() bool {
 }
 
 // handleErr checks if an error happened and makes sure we will retry later.
-func (c *Controller) handleErr(err error, key interface{}) {
+func (c *Controller) handleErr(err error, key any) {
 	if err == nil {
 		c.queue.Forget(key)
 		return
@@ -351,9 +350,8 @@ func (c *Controller) getRegistryBackendHandler(cluster string, matchedRegistries
 	return handler, nil
 }
 
-var clusterDynamicClientBuilder = func(cluster string, controlPlaneClient client.Client) (*util.DynamicClusterClient, error) {
-	// TODO: Add "--cluster-api-qps" and "--cluster-api-burst" flags to karmada-search and pass them via clientOption， instead of passing a "nil" here
-	return util.NewClusterDynamicClientSet(cluster, controlPlaneClient, nil)
+var clusterDynamicClientBuilder = func(cluster string, controlPlaneClient client.Client, clusterClientOption *util.ClientOption) (*util.DynamicClusterClient, error) {
+	return util.NewClusterDynamicClientSet(cluster, controlPlaneClient, clusterClientOption)
 }
 
 // doCacheCluster processes the resourceRegistry object
@@ -395,7 +393,7 @@ func (c *Controller) doCacheCluster(cluster string) error {
 		klog.Info("Try to build informer manager for cluster ", cluster)
 		controlPlaneClient := gclient.NewForConfigOrDie(c.restConfig)
 
-		clusterDynamicClient, err := clusterDynamicClientBuilder(cluster, controlPlaneClient)
+		clusterDynamicClient, err := clusterDynamicClientBuilder(cluster, controlPlaneClient, c.clusterClientOption)
 		if err != nil {
 			return err
 		}
@@ -414,7 +412,7 @@ func (c *Controller) doCacheCluster(cluster string) error {
 			klog.Errorf("Failed to get gvk: %v", err)
 			continue
 		}
-		if !helper.IsAPIEnabled(cls.Status.APIEnablements, gvk.GroupVersion().String(), gvk.Kind) {
+		if cls.APIEnablement(gvk) == clusterv1alpha1.APIDisabled {
 			klog.Warningf("Resource %s is not enabled for cluster %s", gvr.String(), cluster)
 			continue
 		}
@@ -430,7 +428,7 @@ func (c *Controller) doCacheCluster(cluster string) error {
 }
 
 // addResourceRegistry parse the resourceRegistry object and add Cluster to the queue
-func (c *Controller) addResourceRegistry(obj interface{}) {
+func (c *Controller) addResourceRegistry(obj any) {
 	rr := obj.(*searchv1alpha1.ResourceRegistry)
 
 	for _, cluster := range c.getClusters(rr.Spec.TargetCluster) {
@@ -439,7 +437,7 @@ func (c *Controller) addResourceRegistry(obj interface{}) {
 }
 
 // updateResourceRegistry parse the resourceRegistry object and add (added/deleted) Cluster to the queue
-func (c *Controller) updateResourceRegistry(oldObj, newObj interface{}) {
+func (c *Controller) updateResourceRegistry(oldObj, newObj any) {
 	oldRR := oldObj.(*searchv1alpha1.ResourceRegistry)
 	newRR := newObj.(*searchv1alpha1.ResourceRegistry)
 
@@ -458,7 +456,7 @@ func (c *Controller) updateResourceRegistry(oldObj, newObj interface{}) {
 }
 
 // deleteResourceRegistry parse the resourceRegistry object and add deleted Cluster to the queue
-func (c *Controller) deleteResourceRegistry(obj interface{}) {
+func (c *Controller) deleteResourceRegistry(obj any) {
 	rr, isRR := obj.(*searchv1alpha1.ResourceRegistry)
 	// We can get DeletedFinalStateUnknown instead of *searchv1alpha1.ResourceRegistry here and
 	// we need to handle that correctly.
@@ -481,14 +479,14 @@ func (c *Controller) deleteResourceRegistry(obj interface{}) {
 }
 
 // addCluster adds a cluster object to the queue if needed
-func (c *Controller) addCluster(obj interface{}) {
+func (c *Controller) addCluster(obj any) {
 	cluster := obj.(*clusterv1alpha1.Cluster)
 
 	c.queue.Add(cluster.GetName())
 }
 
 // updateCluster rebuild informer if Cluster.Spec is changed
-func (c *Controller) updateCluster(oldObj, curObj interface{}) {
+func (c *Controller) updateCluster(oldObj, curObj any) {
 	curCluster := curObj.(*clusterv1alpha1.Cluster)
 
 	oldCluster := oldObj.(*clusterv1alpha1.Cluster)
@@ -509,7 +507,7 @@ func (c *Controller) updateCluster(oldObj, curObj interface{}) {
 }
 
 // deleteCluster set cluster to not exists
-func (c *Controller) deleteCluster(obj interface{}) {
+func (c *Controller) deleteCluster(obj any) {
 	cluster, isCluster := obj.(*clusterv1alpha1.Cluster)
 	// We can get DeletedFinalStateUnknown instead of *clusterV1alpha1.Cluster here and
 	// we need to handle that correctly.

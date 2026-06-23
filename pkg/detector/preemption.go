@@ -27,7 +27,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/klog/v2"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	policyv1alpha1 "github.com/karmada-io/karmada/pkg/apis/policy/v1alpha1"
@@ -256,7 +255,7 @@ func (d *ResourceDetector) HandleDeprioritizedPropagationPolicy(oldPolicy policy
 	policyList := &policyv1alpha1.PropagationPolicyList{}
 	err := d.Client.List(context.TODO(), policyList, &client.ListOptions{
 		Namespace:             newPolicy.GetNamespace(),
-		UnsafeDisableDeepCopy: ptr.To(true),
+		UnsafeDisableDeepCopy: new(true),
 	})
 	if err != nil {
 		klog.Errorf("Failed to list PropagationPolicy from namespace: %s, error: %v", newPolicy.GetNamespace(), err)
@@ -300,7 +299,7 @@ func (d *ResourceDetector) HandleDeprioritizedClusterPropagationPolicy(oldPolicy
 		newPolicy.GetName(), *oldPolicy.Spec.Priority, *newPolicy.Spec.Priority)
 	policyList := &policyv1alpha1.ClusterPropagationPolicyList{}
 	err := d.Client.List(context.TODO(), policyList, &client.ListOptions{
-		UnsafeDisableDeepCopy: ptr.To(true),
+		UnsafeDisableDeepCopy: new(true),
 	})
 	if err != nil {
 		klog.Errorf("Failed to list ClusterPropagationPolicy, error: %v", err)
@@ -349,7 +348,7 @@ func requeuePotentialKeys(sortedPotentialKeys *pq.Queue, worker util.AsyncWorker
 }
 
 // priorityDescendingComparator provides a basic descending comparison on policy priority.
-func priorityDescendingComparator(a, b interface{}) int {
+func priorityDescendingComparator(a, b any) int {
 	aPriority := a.(*PriorityKey).Priority
 	bPriority := b.(*PriorityKey).Priority
 	return godsutils.Int32Comparator(bPriority, aPriority)

@@ -166,12 +166,8 @@ func (o *Options) runEdit() error {
 			file: file,
 		}
 
-		// TODO: validate edited customization
-
 		// not a syntax error as it turns out...
 		containsError = false
-
-		// TODO: add last-applied-configuration annotation
 
 		switch {
 		case info.Source != "":
@@ -271,7 +267,7 @@ func (o *Options) saveToServer(originalInfo *resource.Info, editedObj runtime.Ob
 		klog.V(4).Infof("Unable to calculate diff, no merge is possible: %v", err)
 		return err
 	}
-	var patchMap map[string]interface{}
+	var patchMap map[string]any
 	err = json.Unmarshal(patch, &patchMap)
 	if err != nil {
 		klog.V(4).Infof("Unable to calculate diff, no merge is possible: %v", err)
@@ -403,8 +399,8 @@ func parseEditedIntoCustomization(file []byte, into *configv1alpha1.ResourceInte
 func stripComments(file []byte) []byte {
 	stripped := make([]byte, 0, len(file))
 
-	lines := bytes.Split(file, []byte("\n"))
-	for _, line := range lines {
+	lines := bytes.SplitSeq(file, []byte("\n"))
+	for line := range lines {
 		trimline := bytes.TrimSpace(line)
 		if bytes.HasPrefix(trimline, []byte(luaCommentPrefix)) && !bytes.HasPrefix(trimline, []byte(luaAnnotationPrefix)) {
 			continue
@@ -491,16 +487,16 @@ func writeComment(w io.Writer, comment string) {
 // commentOnLineBreak returns a string built from the provided string by inserting any necessary '-- '
 // characters after '\n' characters, indicating a comment.
 func commentOnLineBreak(s string) string {
-	r := ""
+	var r strings.Builder
 	for i, ch := range s {
 		j := i + 1
 		if j < len(s) && ch == '\n' && s[j] != '-' {
-			r += "\n-- "
+			r.WriteString("\n-- ")
 		} else {
-			r += string(ch)
+			r.WriteString(string(ch))
 		}
 	}
-	return r
+	return r.String()
 }
 
 // editorEnvs returns an ordered list of env vars to check for editor preferences.

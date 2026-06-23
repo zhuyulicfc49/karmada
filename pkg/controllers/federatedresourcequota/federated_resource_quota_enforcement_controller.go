@@ -66,7 +66,7 @@ type QuotaEnforcementController struct {
 // The SyncController will requeue the Request to be processed again if an error is non-nil or
 // Result.Requeue is true, otherwise upon completion it will remove the work from the queue.
 func (c *QuotaEnforcementController) Reconcile(ctx context.Context, req controllerruntime.Request) (controllerruntime.Result, error) {
-	klog.V(4).Infof("QuotaEnforcementController reconciling %s", req.NamespacedName.String())
+	klog.V(4).InfoS("QuotaEnforcementController reconciling", "namespacedName", req.NamespacedName.String())
 
 	quota := &policyv1alpha1.FederatedResourceQuota{}
 	if err := c.Get(ctx, req.NamespacedName, quota); err != nil {
@@ -74,7 +74,7 @@ func (c *QuotaEnforcementController) Reconcile(ctx context.Context, req controll
 		if apierrors.IsNotFound(err) {
 			return controllerruntime.Result{}, nil
 		}
-		klog.Errorf("Error fetching FederatedResourceQuota %s: %v", req.NamespacedName.String(), err)
+		klog.ErrorS(err, "Error fetching FederatedResourceQuota", "federatedResourceQuota", req.NamespacedName.String())
 		return controllerruntime.Result{}, err
 	}
 
@@ -83,8 +83,8 @@ func (c *QuotaEnforcementController) Reconcile(ctx context.Context, req controll
 	}
 
 	if err := c.collectQuotaStatus(quota); err != nil {
-		klog.Errorf("Failed to collect status for FederatedResourceQuota(%s), error: %v", req.NamespacedName.String(), err)
-		c.EventRecorder.Eventf(quota, corev1.EventTypeWarning, events.EventReasonCollectFederatedResourceQuotaOverallStatusFailed, err.Error())
+		klog.ErrorS(err, "Failed to collect status for FederatedResourceQuota", "federatedResourceQuota", req.NamespacedName.String())
+		c.EventRecorder.Eventf(quota, corev1.EventTypeWarning, events.EventReasonCollectFederatedResourceQuotaOverallStatusFailed, "%s", err.Error())
 		return controllerruntime.Result{}, err
 	}
 
@@ -99,13 +99,13 @@ func (c *QuotaEnforcementController) SetupWithManager(mgr controllerruntime.Mana
 		func(ctx context.Context, obj client.Object) []reconcile.Request {
 			rb, ok := obj.(*workv1alpha2.ResourceBinding)
 			if !ok {
-				klog.Errorf("Failed to convert object %v to ResourceBinding", obj)
+				klog.ErrorS(fmt.Errorf("unexpected type: %T", obj), "Failed to convert object to ResourceBinding", "object", obj)
 				return []reconcile.Request{}
 			}
 
 			federatedResourceQuotaList := &policyv1alpha1.FederatedResourceQuotaList{}
 			if err := c.Client.List(ctx, federatedResourceQuotaList, &client.ListOptions{Namespace: rb.GetNamespace()}); err != nil {
-				klog.Errorf("Failed to list FederatedResourceQuota, error: %v", err)
+				klog.ErrorS(err, "Failed to list FederatedResourceQuota")
 				return []reconcile.Request{}
 			}
 
@@ -129,7 +129,7 @@ func (c *QuotaEnforcementController) SetupWithManager(mgr controllerruntime.Mana
 		func(ctx context.Context, _ client.Object) []reconcile.Request {
 			federatedResourceQuotaList := &policyv1alpha1.FederatedResourceQuotaList{}
 			if err := c.Client.List(ctx, federatedResourceQuotaList); err != nil {
-				klog.Errorf("Failed to list FederatedResourceQuota, error: %v", err)
+				klog.ErrorS(err, "Failed to list FederatedResourceQuota")
 				return []reconcile.Request{}
 			}
 
@@ -217,7 +217,7 @@ func (q *QuotaRecalculation) Start(ctx context.Context) error {
 	defer close(q.resyncEvent)
 
 	if q.ResyncPeriod.Duration > 0 {
-		klog.Infof("Starting FederatedResourceQuota recalculation process with period %s", q.ResyncPeriod.Duration.String())
+		klog.InfoS("Starting FederatedResourceQuota recalculation process with period", "duration", q.ResyncPeriod.Duration.String())
 		ticker := time.NewTicker(q.ResyncPeriod.Duration)
 		defer ticker.Stop()
 		for {
@@ -242,7 +242,7 @@ func (c *QuotaEnforcementController) collectQuotaStatus(quota *policyv1alpha1.Fe
 	// TODO: Consider adding filtering step to ResourceBinding list once scope is added to the quota
 	bindingList, err := helper.GetResourceBindingsByNamespace(c.Client, quota.Namespace)
 	if err != nil {
-		klog.Errorf("Failed to list resourcebindings tracked by FederatedResourceQuota(%s), error: %v", klog.KObj(quota).String(), err)
+		klog.ErrorS(err, "Failed to list resourcebindings tracked by FederatedResourceQuota", "federatedResourceQuota", klog.KObj(quota).String())
 		return err
 	}
 
@@ -251,7 +251,7 @@ func (c *QuotaEnforcementController) collectQuotaStatus(quota *policyv1alpha1.Fe
 	quotaStatus.OverallUsed = calculateUsedWithResourceBinding(bindingList.Items, quota.Spec.Overall)
 
 	if reflect.DeepEqual(quota.Status, *quotaStatus) {
-		klog.V(4).Infof("New quotaStatus is equal with old federatedResourceQuota(%s) status, no update required.", klog.KObj(quota).String())
+		klog.V(4).InfoS("New quotaStatus is equal with old federatedResourceQuota status, no update required.", "federatedResourceQuota", klog.KObj(quota).String())
 		return nil
 	}
 
@@ -266,7 +266,7 @@ func (c *QuotaEnforcementController) collectQuotaStatus(quota *policyv1alpha1.Fe
 func calculateUsedWithResourceBinding(resourceBindings []workv1alpha2.ResourceBinding, overall corev1.ResourceList) corev1.ResourceList {
 	overallUsed := corev1.ResourceList{}
 	for _, binding := range resourceBindings {
-		usage := calculateResourceUsage(&binding)
+		usage := helper.CalculateResourceUsage(&binding)
 		for name, quantity := range usage {
 			existing, found := overallUsed[name]
 			if found {
@@ -278,38 +278,6 @@ func calculateUsedWithResourceBinding(resourceBindings []workv1alpha2.ResourceBi
 		}
 	}
 	return filterResourceListByOverall(overallUsed, overall)
-}
-
-// calculateResourceUsage calculates the total resource usage based on the ResourceBinding.
-func calculateResourceUsage(rb *workv1alpha2.ResourceBinding) corev1.ResourceList {
-	if rb == nil || rb.Spec.ReplicaRequirements == nil || len(rb.Spec.ReplicaRequirements.ResourceRequest) == 0 || len(rb.Spec.Clusters) == 0 {
-		return corev1.ResourceList{}
-	}
-
-	totalReplicas := int32(0)
-	for _, cluster := range rb.Spec.Clusters {
-		totalReplicas += cluster.Replicas
-	}
-
-	if totalReplicas == 0 {
-		return corev1.ResourceList{}
-	}
-
-	usage := corev1.ResourceList{}
-	replicaCount := int64(totalReplicas)
-
-	for resourceName, quantityPerReplica := range rb.Spec.ReplicaRequirements.ResourceRequest {
-		if quantityPerReplica.IsZero() {
-			continue
-		}
-
-		totalQuantity := quantityPerReplica.DeepCopy()
-		totalQuantity.Mul(replicaCount)
-
-		usage[resourceName] = totalQuantity
-	}
-
-	return usage
 }
 
 // Filters source ResourceList using the keys provided by reference

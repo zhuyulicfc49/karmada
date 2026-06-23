@@ -215,13 +215,13 @@ func TestRunKarmadaAPIServer(t *testing.T) {
 							Resources:       corev1.ResourceRequirements{},
 							ImagePullPolicy: corev1.PullIfNotPresent,
 						},
-						ServiceSubnet: ptr.To("10.96.0.0/12"),
+						ServiceSubnet: new("10.96.0.0/12"),
 					},
 					Etcd: &operatorv1alpha1.Etcd{
 						Local: &operatorv1alpha1.LocalEtcd{},
 					},
 				},
-				RemoteClientConnector: fakeclientset.NewSimpleClientset(),
+				RemoteClientConnector: fakeclientset.NewClientset(),
 				FeatureGatesOptions: map[string]bool{
 					"Feature1": true,
 				},
@@ -266,7 +266,7 @@ func TestRunWaitKarmadaAPIServer(t *testing.T) {
 			runData: &TestInitData{
 				Name:                   "karmada-demo",
 				Namespace:              "test",
-				RemoteClientConnector:  fakeclientset.NewSimpleClientset(),
+				RemoteClientConnector:  fakeclientset.NewClientset(),
 				ControlplaneConfigREST: &rest.Config{},
 				FeatureGatesOptions: map[string]bool{
 					"Feature1": true,
@@ -284,7 +284,7 @@ func TestRunWaitKarmadaAPIServer(t *testing.T) {
 			runData: &TestInitData{
 				Name:                   "karmada-demo",
 				Namespace:              "test",
-				RemoteClientConnector:  fakeclientset.NewSimpleClientset(),
+				RemoteClientConnector:  fakeclientset.NewClientset(),
 				ControlplaneConfigREST: &rest.Config{},
 				FeatureGatesOptions: map[string]bool{
 					"Feature1": true,
@@ -363,7 +363,7 @@ func TestRunKarmadaAggregatedAPIServer(t *testing.T) {
 						Local: &operatorv1alpha1.LocalEtcd{},
 					},
 				},
-				RemoteClientConnector: fakeclientset.NewSimpleClientset(),
+				RemoteClientConnector: fakeclientset.NewClientset(),
 				FeatureGatesOptions: map[string]bool{
 					"Feature1": true,
 				},
@@ -410,7 +410,7 @@ func TestRunWaitKarmadaAggregatedAPIServer(t *testing.T) {
 			runData: &TestInitData{
 				Name:                   "karmada-demo",
 				Namespace:              "test",
-				RemoteClientConnector:  fakeclientset.NewSimpleClientset(),
+				RemoteClientConnector:  fakeclientset.NewClientset(),
 				ControlplaneConfigREST: &rest.Config{},
 				FeatureGatesOptions: map[string]bool{
 					"Feature1": true,
@@ -428,7 +428,7 @@ func TestRunWaitKarmadaAggregatedAPIServer(t *testing.T) {
 			runData: &TestInitData{
 				Name:                   "karmada-demo",
 				Namespace:              "test",
-				RemoteClientConnector:  fakeclientset.NewSimpleClientset(),
+				RemoteClientConnector:  fakeclientset.NewClientset(),
 				ControlplaneConfigREST: &rest.Config{},
 				FeatureGatesOptions: map[string]bool{
 					"Feature1": true,

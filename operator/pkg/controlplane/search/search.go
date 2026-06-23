@@ -21,12 +21,15 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kuberuntime "k8s.io/apimachinery/pkg/runtime"
 	clientset "k8s.io/client-go/kubernetes"
 	clientsetscheme "k8s.io/client-go/kubernetes/scheme"
 
 	operatorv1alpha1 "github.com/karmada-io/karmada/operator/pkg/apis/operator/v1alpha1"
+	"github.com/karmada-io/karmada/operator/pkg/controlplane/apiserver"
 	"github.com/karmada-io/karmada/operator/pkg/controlplane/etcd"
+	"github.com/karmada-io/karmada/operator/pkg/controlplane/pdb"
 	"github.com/karmada-io/karmada/operator/pkg/util"
 	"github.com/karmada-io/karmada/operator/pkg/util/apiclient"
 	"github.com/karmada-io/karmada/operator/pkg/util/patcher"
@@ -72,11 +75,18 @@ func installKarmadaSearch(client clientset.Interface, cfg *operatorv1alpha1.Karm
 
 	patcher.NewPatcher().WithAnnotations(cfg.Annotations).WithLabels(cfg.Labels).
 		WithPriorityClassName(cfg.CommonSettings.PriorityClassName).
-		WithExtraArgs(cfg.ExtraArgs).WithResources(cfg.Resources).ForDeployment(searchDeployment)
+		WithExtraArgs(cfg.ExtraArgs).WithResources(cfg.Resources).
+		WithTolerations(cfg.CommonSettings.Tolerations).WithAffinity(cfg.CommonSettings.Affinity).ForDeployment(searchDeployment)
 
-	if err := apiclient.CreateOrUpdateDeployment(client, searchDeployment); err != nil {
+	if searchDeployment, err = apiclient.CreateOrUpdateDeployment(client, searchDeployment); err != nil {
 		return fmt.Errorf("error when creating deployment for %s, err: %w", searchDeployment.Name, err)
 	}
+
+	ownerRef := *metav1.NewControllerRef(searchDeployment, apiserver.DeploymentGVK)
+	if err := pdb.EnsurePodDisruptionBudget(client, util.KarmadaSearchName(name), namespace, cfg.CommonSettings.PodDisruptionBudgetConfig, searchDeployment.Spec.Template.Labels, []metav1.OwnerReference{ownerRef}); err != nil {
+		return fmt.Errorf("failed to ensure PDB for search component %s, err: %w", util.KarmadaSearchName(name), err)
+	}
+
 	return nil
 }
 

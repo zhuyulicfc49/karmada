@@ -206,7 +206,7 @@ func TestCommandInitOption_genCerts(t *testing.T) {
 
 func TestInitKarmadaAPIServer(t *testing.T) {
 	// Create a fake clientset
-	clientset := fake.NewSimpleClientset()
+	clientset := fake.NewClientset()
 
 	// Create a new CommandInitOption
 	initOption := &CommandInitOption{
@@ -243,7 +243,7 @@ func TestInitKarmadaAPIServer(t *testing.T) {
 
 func TestCommandInitOption_initKarmadaComponent(t *testing.T) {
 	// Create a fake kube clientset
-	clientSet := fake.NewSimpleClientset()
+	clientSet := fake.NewClientset()
 
 	// Create a new CommandInitOption
 	initOption := &CommandInitOption{
@@ -384,46 +384,6 @@ func TestKubeControllerManagerImage(t *testing.T) {
 			got := tt.opt.kubeControllerManagerImage()
 			if got != tt.expected {
 				t.Errorf("CommandInitOption.kubeControllerManagerImage() = %v, want %v", got, tt.expected)
-			}
-		})
-	}
-}
-
-func TestEtcdInitImage(t *testing.T) {
-	tests := []struct {
-		name     string
-		opt      *CommandInitOption
-		expected string
-	}{
-		{
-			name: "ImageRegistry is set and EtcdInitImage is set to default value",
-			opt: &CommandInitOption{
-				ImageRegistry: "my-registry",
-				EtcdInitImage: DefaultInitImage,
-			},
-			expected: "my-registry/alpine:3.21.3",
-		},
-		{
-			name: "EtcdInitImage is set to a non-default value",
-			opt: &CommandInitOption{
-				EtcdInitImage: "my-etcd-init-image",
-			},
-			expected: "my-etcd-init-image",
-		},
-		{
-			name: "ImageRegistry is not set and EtcdInitImage is set to default value",
-			opt: &CommandInitOption{
-				EtcdInitImage: DefaultInitImage,
-			},
-			expected: DefaultInitImage,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := tt.opt.etcdInitImage()
-			if result != tt.expected {
-				t.Errorf("Unexpected result: %s, expected: %s", result, tt.expected)
 			}
 		})
 	}
@@ -576,10 +536,6 @@ func TestParseInitConfig(t *testing.T) {
 						},
 						Replicas: 3,
 					},
-					InitImage: config.Image{
-						Repository: "init-image",
-						Tag:        "latest",
-					},
 					DataPath: "/data/dir",
 					PVCSize:  "5Gi",
 					NodeSelectorLabels: map[string]string{
@@ -686,7 +642,6 @@ func TestParseInitConfig(t *testing.T) {
 	assert.Equal(t, "1.2.3.4,5.6.7.8", opt.ExternalIP)
 	assert.Equal(t, parseDuration("8760h"), opt.CertValidity)
 	assert.Equal(t, "etcd-image:latest", opt.EtcdImage)
-	assert.Equal(t, "init-image:latest", opt.EtcdInitImage)
 	assert.Equal(t, "/data/dir", opt.EtcdHostDataPath)
 	assert.Equal(t, "5Gi", opt.EtcdPersistentVolumeSize)
 	assert.Equal(t, "key=value", opt.EtcdNodeSelectorLabels)

@@ -23,7 +23,7 @@ spec:
         - /bin/karmada-operator
         - --leader-elect-resource-namespace=karmada-system
         - --logging-format=json
-        - --v=4
+        - --v=2
         ports:
         - containerPort: 8080
           name: metrics

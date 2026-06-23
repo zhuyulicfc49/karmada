@@ -78,13 +78,24 @@ type ResourceBindingSpec struct {
 	// +optional
 	PropagateDeps bool `json:"propagateDeps,omitempty"`
 
-	// ReplicaRequirements represents the requirements required by each replica.
+	// ReplicaRequirements represents the resource and scheduling requirements for each replica.
 	// +optional
 	ReplicaRequirements *ReplicaRequirements `json:"replicaRequirements,omitempty"`
 
 	// Replicas represents the replica number of the referencing resource.
 	// +optional
 	Replicas int32 `json:"replicas,omitempty"`
+
+	// Components represents the requirements of multiple pod templates of the referencing resource.
+	// It is designed to support workloads that consist of multiple pod templates,
+	// such as distributed training jobs (e.g., PyTorch, TensorFlow) and big data workloads (e.g., FlinkDeployment),
+	// where each workload is composed of more than one pod template. It is also capable of representing
+	// single-component workloads, such as Deployment.
+	//
+	// Note: This field is intended to replace the legacy ReplicaRequirements and Replicas fields above.
+	// It is only populated when the MultiplePodTemplatesScheduling feature gate is enabled.
+	// +optional
+	Components []Component `json:"components,omitempty"`
 
 	// Clusters represents target member clusters where the resource to be deployed.
 	// +optional
@@ -163,6 +174,16 @@ type ResourceBindingSpec struct {
 	// SchedulePriority represents the scheduling priority assigned to workloads.
 	// +optional
 	SchedulePriority *SchedulePriority `json:"schedulePriority,omitempty"`
+
+	// WorkloadAffinityGroups represents instantiated grouping results from .spec.placement.workloadAffinity,
+	// used to keep workloads with the same affinity group co-located or those with the same
+	// anti-affinity group separated across clusters. Populated by controllers, the scheduler
+	// consumes it for decisions.
+	// Note: Since workloads are namespace-scoped resources, workload affinity only applies to
+	// ResourceBinding. Therefore, the WorkloadAffinityGroups field in ClusterResourceBinding
+	// will not be set and will not be consumed by the scheduler.
+	// +optional
+	WorkloadAffinityGroups *WorkloadAffinityGroups `json:"workloadAffinityGroups,omitempty"`
 }
 
 // ObjectReference contains enough information to locate the referenced object inside current cluster.
@@ -193,7 +214,7 @@ type ObjectReference struct {
 	ResourceVersion string `json:"resourceVersion,omitempty"`
 }
 
-// ReplicaRequirements represents the requirements required by each replica.
+// ReplicaRequirements represents the resource and scheduling requirements for each replica.
 type ReplicaRequirements struct {
 	// NodeClaim represents the node claim HardNodeAffinity, NodeSelector and Tolerations required by each replica.
 	// +optional
@@ -206,6 +227,39 @@ type ReplicaRequirements struct {
 	// Namespace represents the resources namespaces
 	// +optional
 	Namespace string `json:"namespace,omitempty"`
+
+	// PriorityClassName represents the resources priorityClassName
+	// +optional
+	PriorityClassName string `json:"priorityClassName,omitempty"`
+}
+
+// Component represents the requirements for a specific component.
+type Component struct {
+	// Name of this component.
+	// It is required when the resource contains multiple components to ensure proper identification,
+	// and must also be unique within the same resource.
+	// +kubebuilder:validation:MaxLength=32
+	// +required
+	Name string `json:"name"`
+
+	// Replicas represents the replica number of the resource's component.
+	// +required
+	Replicas int32 `json:"replicas"`
+
+	// ReplicaRequirements represents the resource and scheduling requirements for each replica.
+	// +optional
+	ReplicaRequirements *ComponentReplicaRequirements `json:"replicaRequirements,omitempty"`
+}
+
+// ComponentReplicaRequirements represents the resource and scheduling requirements for each replica.
+type ComponentReplicaRequirements struct {
+	// NodeClaim represents the node claim HardNodeAffinity, NodeSelector and Tolerations required by each replica.
+	// +optional
+	NodeClaim *NodeClaim `json:"nodeClaim,omitempty"`
+
+	// ResourceRequest represents the resources required by each replica.
+	// +optional
+	ResourceRequest corev1.ResourceList `json:"resourceRequest,omitempty"`
 
 	// PriorityClassName represents the resources priorityClassName
 	// +optional
@@ -246,8 +300,8 @@ type GracefulEvictionTask struct {
 
 	// PurgeMode represents how to deal with the legacy applications on the
 	// cluster from which the application is migrated.
-	// Valid options are "Immediately", "Graciously" and "Never".
-	// +kubebuilder:validation:Enum=Immediately;Graciously;Never
+	// Valid options are "Immediately", "Directly", "Graciously", "Gracefully" and "Never".
+	// +kubebuilder:validation:Enum=Immediately;Directly;Graciously;Gracefully;Never
 	// +optional
 	PurgeMode policyv1alpha1.PurgeMode `json:"purgeMode,omitempty"`
 
@@ -351,6 +405,22 @@ type SchedulePriority struct {
 	Priority int32 `json:"priority,omitempty"`
 }
 
+// WorkloadAffinityGroups stores the instantiated affinity and anti-affinity group names.
+// Each group name is serialized as "<labelKey>=<labelValue>" (for example: "app.group=frontend"),
+// and is used by the scheduler to co-locate workloads in the same affinity group and to separate
+// workloads in the same anti-affinity group.
+// Note: If multiple groups are needed later, prefer adding list-typed fields (e.g., AffinityGroups,
+// AntiAffinityGroups) alongside these fields to keep backward compatibility.
+type WorkloadAffinityGroups struct {
+	// AffinityGroup is the instantiated group name derived from affinity rules.
+	// +optional
+	AffinityGroup string `json:"affinityGroup,omitempty"`
+
+	// AntiAffinityGroup is the instantiated group name derived from anti-affinity rules.
+	// +optional
+	AntiAffinityGroup string `json:"antiAffinityGroup,omitempty"`
+}
+
 // ResourceBindingStatus represents the overall status of the strategy as well as the referenced resources.
 type ResourceBindingStatus struct {
 	// SchedulerObservedGeneration is the generation(.metadata.generation) observed by the scheduler.
@@ -432,6 +502,11 @@ const (
 	// BindingReasonUnschedulable reason in Scheduled condition means that the scheduler can't schedule
 	// the binding right now, for example due to insufficient resources in the clusters.
 	BindingReasonUnschedulable = "Unschedulable"
+
+	// BindingReasonQuotaExceeded reason in Scheduled condition means that the scheduler can't schedule
+	// the binding because the resource requirement exceeds one or more of the FederatedResourceQuotas
+	// defined in the namespace.
+	BindingReasonQuotaExceeded = "QuotaExceeded"
 )
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

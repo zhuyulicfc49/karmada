@@ -46,7 +46,6 @@ import (
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
 	"k8s.io/kubectl/pkg/util/interrupt"
 	"k8s.io/kubectl/pkg/util/templates"
-	"k8s.io/utils/ptr"
 
 	karmadaclientset "github.com/karmada-io/karmada/pkg/generated/clientset/versioned"
 	"github.com/karmada-io/karmada/pkg/karmadactl/options"
@@ -58,7 +57,6 @@ import (
 
 const (
 	printColumnClusterNum = 1
-	proxyURL              = "/apis/cluster.karmada.io/v1alpha1/clusters/%s/proxy/"
 )
 
 type adoption string
@@ -511,9 +509,9 @@ func (g *CommandGetOptions) getObjInfo(mux *sync.Mutex, f cmdutil.Factory,
 
 	if !isControlPlane {
 		// check if it is authorized to proxy this member cluster
-		request := restClient.Get().RequestURI(fmt.Sprintf(proxyURL, cluster) + "api")
+		request := restClient.Get().RequestURI("api")
 		if _, err := request.DoRaw(context.TODO()); err != nil {
-			*allErrs = append(*allErrs, fmt.Errorf("cluster(%s) is inaccessible, please check authorization or network", cluster))
+			*allErrs = append(*allErrs, fmt.Errorf("basic connection test to cluster(%s) failed, please check authorization or network: %v", cluster, err))
 			return
 		}
 	}
@@ -592,7 +590,7 @@ func (g *CommandGetOptions) reconstructionRow(objs []Obj, table *metav1.Table) (
 			return nil, nil, err
 		}
 		for rowIdx := range table.Rows {
-			var cells []interface{}
+			var cells []any
 			cells = append(cells, table.Rows[rowIdx].Cells[0])
 			cells = append(cells, objs[ix].Cluster)
 			cells = append(cells, table.Rows[rowIdx].Cells[1:]...)
@@ -635,7 +633,7 @@ func (g *CommandGetOptions) reconstructObj(obj runtime.Object, mapping *meta.RES
 	}
 
 	for rowIdx := range table.Rows {
-		var cells []interface{}
+		var cells []any
 		if g.OutputWatchEvents {
 			cells = append(append(cells, event, table.Rows[rowIdx].Cells[0], cluster), table.Rows[rowIdx].Cells[1:]...)
 		} else {
@@ -687,7 +685,7 @@ func (g *CommandGetOptions) watch(watchObjs []WatchObj) error {
 
 	info := infos[0]
 	mapping := info.ResourceMapping()
-	outputObjects := ptr.To[bool](!g.WatchOnly)
+	outputObjects := new(!g.WatchOnly)
 
 	printer, err := g.ToPrinter(mapping, outputObjects, g.AllNamespaces, false)
 	if err != nil {
@@ -869,14 +867,14 @@ func (g *CommandGetOptions) printGeneric(r *resource.Result) error {
 
 		// take the items and create a new list for display
 		list := &unstructured.UnstructuredList{
-			Object: map[string]interface{}{
+			Object: map[string]any{
 				"kind":       "List",
 				"apiVersion": "v1",
-				"metadata":   map[string]interface{}{},
+				"metadata":   map[string]any{},
 			},
 		}
 		if listMeta, err := meta.ListAccessor(obj); err == nil {
-			list.Object["metadata"] = map[string]interface{}{
+			list.Object["metadata"] = map[string]any{
 				"selfLink":        listMeta.GetSelfLink(),
 				"resourceVersion": listMeta.GetResourceVersion(),
 			}

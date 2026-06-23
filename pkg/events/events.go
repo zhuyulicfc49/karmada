@@ -66,6 +66,8 @@ const (
 	EventReasonSyncScheduleResultToDependenciesSucceed = "SyncScheduleResultToDependenciesSucceed"
 	// EventReasonSyncScheduleResultToDependenciesFailed indicates sync schedule result to attached bindings failed.
 	EventReasonSyncScheduleResultToDependenciesFailed = "SyncScheduleResultToDependenciesFailed"
+	// EventReasonDependencyPolicyConflict indicates a dependency policy conflict was detected.
+	EventReasonDependencyPolicyConflict = "DependencyPolicyConflict"
 )
 
 // Define events for ResourceBinding, ClusterResourceBinding objects and their associated resources.
@@ -122,6 +124,14 @@ const (
 	EventReasonGetDependenciesSucceed = "GetDependenciesSucceed"
 	// EventReasonGetDependenciesFailed indicates get dependencies of resource template failed.
 	EventReasonGetDependenciesFailed = "GetDependenciesFailed"
+	// EventReasonGetComponentsSucceed indicates get components of resource template succeed.
+	EventReasonGetComponentsSucceed = "GetComponentsSucceed"
+	// EventReasonGetComponentsFailed indicates get components of resource template failed.
+	EventReasonGetComponentsFailed = "GetComponentsFailed"
+	// EventReasonGetReplicasSucceed indicates get replicas of resource template succeed.
+	EventReasonGetReplicasSucceed = "GetReplicasSucceed"
+	// EventReasonGetReplicasFailed indicates get replicas of resource template failed.
+	EventReasonGetReplicasFailed = "GetReplicasFailed"
 	// EventReasonPreemptPolicySucceed indicates policy preemption of resource template succeed.
 	EventReasonPreemptPolicySucceed = "PreemptPolicySucceed"
 	// EventReasonPreemptPolicyFailed indicates policy preemption of resource template failed.

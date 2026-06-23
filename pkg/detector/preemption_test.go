@@ -34,30 +34,43 @@ import (
 
 	policyv1alpha1 "github.com/karmada-io/karmada/pkg/apis/policy/v1alpha1"
 	"github.com/karmada-io/karmada/pkg/apis/work/v1alpha2"
+	"github.com/karmada-io/karmada/pkg/util"
 	"github.com/karmada-io/karmada/pkg/util/fedinformer/genericmanager"
 )
 
 type MockAsyncWorker struct {
-	queue []interface{}
+	queue []any
 }
 
 // Note: This is a dummy implementation of Add for testing purposes.
-func (m *MockAsyncWorker) Add(item interface{}) {
+func (m *MockAsyncWorker) Add(item any) {
 	// No actual work is done in the mock; we just simulate running
 	m.queue = append(m.queue, item)
 }
 
 // Note: This is a dummy implementation of AddAfter for testing purposes.
-func (m *MockAsyncWorker) AddAfter(item interface{}, duration time.Duration) {
+func (m *MockAsyncWorker) AddAfter(item any, duration time.Duration) {
 	// No actual work is done in the mock; we just simulate running
 	fmt.Printf("%v", duration)
 	m.queue = append(m.queue, item)
 }
 
 // Note: This is a dummy implementation of Enqueue for testing purposes.
-func (m *MockAsyncWorker) Enqueue(obj interface{}) {
+func (m *MockAsyncWorker) Enqueue(obj any) {
 	// Assuming KeyFunc is used to generate a key; for simplicity, we use obj directly
 	m.queue = append(m.queue, obj)
+}
+
+// Note: This is a dummy implementation of AddWithOpts for testing purposes.
+func (m *MockAsyncWorker) AddWithOpts(_ util.AddOpts, items ...any) {
+	for _, item := range items {
+		m.Add(item)
+	}
+}
+
+// Note: This is a dummy implementation of EnqueueWithOpts for testing purposes.
+func (m *MockAsyncWorker) EnqueueWithOpts(_ util.AddOpts, item any) {
+	m.Enqueue(item)
 }
 
 // Note: This is a dummy implementation of Run for testing purposes.
@@ -68,7 +81,7 @@ func (m *MockAsyncWorker) Run(ctx context.Context, workerNumber int) {
 }
 
 // GetQueue returns the current state of the queue
-func (m *MockAsyncWorker) GetQueue() []interface{} {
+func (m *MockAsyncWorker) GetQueue() []any {
 	return m.queue
 }
 
@@ -330,8 +343,7 @@ func TestHandleDeprioritizedPropagationPolicy(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fakeClient := tt.setupClient().Build()
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
+			ctx := t.Context()
 			fakeDynamicClient := dynamicfake.NewSimpleDynamicClient(scheme, tt.objects...)
 			genMgr := genericmanager.NewSingleClusterInformerManager(ctx, fakeDynamicClient, 0)
 			resourceDetector := &ResourceDetector{
@@ -612,8 +624,7 @@ func TestHandleDeprioritizedClusterPropagationPolicy(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fakeClient := tt.setupClient().Build()
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
+			ctx := t.Context()
 			fakeDynamicClient := dynamicfake.NewSimpleDynamicClient(scheme, tt.objects...)
 			genMgr := genericmanager.NewSingleClusterInformerManager(ctx, fakeDynamicClient, 0)
 			resourceDetector := &ResourceDetector{

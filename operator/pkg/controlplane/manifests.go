@@ -78,7 +78,7 @@ spec:
             - --service-account-private-key-file=/etc/karmada/pki/karmada.key
             - --service-cluster-ip-range=10.96.0.0/12
             - --use-service-account-credentials=true
-            - --v=4
+            - --v=2
           livenessProbe:
             failureThreshold: 8
             httpGet:
@@ -147,7 +147,7 @@ spec:
             - --leader-elect-resource-namespace={{ .SystemNamespace }}
             - --metrics-bind-address=$(POD_IP):8080
             - --health-probe-bind-address=$(POD_IP):10357
-            - --v=4
+            - --v=2
           livenessProbe:
             httpGet:
               path: /healthz
@@ -216,7 +216,7 @@ spec:
             - --scheduler-estimator-ca-file=/etc/karmada/pki/ca.crt
             - --scheduler-estimator-cert-file=/etc/karmada/pki/karmada.crt
             - --scheduler-estimator-key-file=/etc/karmada/pki/karmada.key
-            - --v=4
+            - --v=2
           livenessProbe:
             httpGet:
               path: /healthz
@@ -290,7 +290,7 @@ spec:
             - --scheduler-estimator-ca-file=/etc/karmada/pki/ca.crt
             - --scheduler-estimator-cert-file=/etc/karmada/pki/karmada.crt
             - --scheduler-estimator-key-file=/etc/karmada/pki/karmada.key
-            - --v=4
+            - --v=2
           livenessProbe:
             httpGet:
               path: /healthz

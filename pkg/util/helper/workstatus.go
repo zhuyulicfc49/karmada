@@ -65,20 +65,17 @@ func AggregateResourceBindingWorkStatus(
 	if err != nil {
 		return err
 	}
-
 	aggregatedStatuses, err := assembleWorkStatus(workList.Items, binding.Spec.Resource)
 	if err != nil {
 		return err
 	}
-
-	fullyAppliedCondition := generateFullyAppliedCondition(binding.Spec, aggregatedStatuses)
 
 	var operationResult controllerutil.OperationResult
 	if err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		operationResult, err = UpdateStatus(ctx, c, binding, func() error {
 			binding.Status.AggregatedStatus = aggregatedStatuses
 			// set binding status with the newest condition
-			meta.SetStatusCondition(&binding.Status.Conditions, fullyAppliedCondition)
+			meta.SetStatusCondition(&binding.Status.Conditions, generateFullyAppliedCondition(binding.Spec, aggregatedStatuses))
 			return nil
 		})
 		return err
@@ -108,20 +105,17 @@ func AggregateClusterResourceBindingWorkStatus(
 	if err != nil {
 		return err
 	}
-
 	aggregatedStatuses, err := assembleWorkStatus(workList.Items, binding.Spec.Resource)
 	if err != nil {
 		return err
 	}
-
-	fullyAppliedCondition := generateFullyAppliedCondition(binding.Spec, aggregatedStatuses)
 
 	var operationResult controllerutil.OperationResult
 	if err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		operationResult, err = UpdateStatus(ctx, c, binding, func() error {
 			binding.Status.AggregatedStatus = aggregatedStatuses
 			// set binding status with the newest condition
-			meta.SetStatusCondition(&binding.Status.Conditions, fullyAppliedCondition)
+			meta.SetStatusCondition(&binding.Status.Conditions, generateFullyAppliedCondition(binding.Spec, aggregatedStatuses))
 			return nil
 		})
 		return err
@@ -297,7 +291,7 @@ func IsResourceApplied(workStatus *workv1alpha1.WorkStatus) bool {
 }
 
 // BuildStatusRawExtension builds raw JSON by a status map.
-func BuildStatusRawExtension(status interface{}) (*runtime.RawExtension, error) {
+func BuildStatusRawExtension(status any) (*runtime.RawExtension, error) {
 	statusJSON, err := json.Marshal(status)
 	if err != nil {
 		klog.Errorf("Failed to marshal status. Error: %v.", statusJSON)

@@ -22,6 +22,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kuberuntime "k8s.io/apimachinery/pkg/runtime"
 	clientset "k8s.io/client-go/kubernetes"
 	clientsetscheme "k8s.io/client-go/kubernetes/scheme"
@@ -29,10 +30,14 @@ import (
 
 	operatorv1alpha1 "github.com/karmada-io/karmada/operator/pkg/apis/operator/v1alpha1"
 	"github.com/karmada-io/karmada/operator/pkg/constants"
+	"github.com/karmada-io/karmada/operator/pkg/controlplane/pdb"
 	"github.com/karmada-io/karmada/operator/pkg/util"
 	"github.com/karmada-io/karmada/operator/pkg/util/apiclient"
 	"github.com/karmada-io/karmada/operator/pkg/util/patcher"
 )
+
+// StatefulSetGVK represents the GroupVersionKind (GVK) for a Kubernetes StatefulSet resource.
+var StatefulSetGVK = appsv1.SchemeGroupVersion.WithKind("StatefulSet")
 
 // EnsureKarmadaEtcd creates etcd StatefulSet and service resource.
 func EnsureKarmadaEtcd(client clientset.Interface, cfg *operatorv1alpha1.LocalEtcd, name, namespace string) error {
@@ -62,10 +67,10 @@ func installKarmadaEtcd(client clientset.Interface, name, namespace string, cfg 
 	}
 
 	etcdStatefulSetBytes, err := util.ParseTemplate(KarmadaEtcdStatefulSet, struct {
-		KarmadaInstanceName, StatefulSetName, Namespace, Image string
-		ImagePullPolicy, EtcdClientService, CertsSecretName    string
-		InitialCluster, EtcdDataVolumeName, EtcdCipherSuites   string
-		Replicas, EtcdListenClientPort, EtcdListenPeerPort     int32
+		KarmadaInstanceName, StatefulSetName, Namespace, Image              string
+		ImagePullPolicy, EtcdClientService, CertsSecretName                 string
+		InitialCluster, EtcdDataVolumeName, EtcdCipherSuites                string
+		Replicas, EtcdListenClientPort, EtcdListenPeerPort, EtcdMetricsPort int32
 	}{
 		KarmadaInstanceName:  name,
 		StatefulSetName:      util.KarmadaEtcdName(name),
@@ -80,6 +85,7 @@ func installKarmadaEtcd(client clientset.Interface, name, namespace string, cfg 
 		Replicas:             *cfg.Replicas,
 		EtcdListenClientPort: constants.EtcdListenClientPort,
 		EtcdListenPeerPort:   constants.EtcdListenPeerPort,
+		EtcdMetricsPort:      constants.EtcdMetricsPort,
 	})
 	if err != nil {
 		return fmt.Errorf("error when parsing Etcd statefuelset template: %w", err)
@@ -91,11 +97,16 @@ func installKarmadaEtcd(client clientset.Interface, name, namespace string, cfg 
 	}
 
 	patcher.NewPatcher().WithAnnotations(cfg.Annotations).WithLabels(cfg.Labels).
-		WithPriorityClassName(cfg.CommonSettings.PriorityClassName).
-		WithVolumeData(cfg.VolumeData).WithResources(cfg.Resources).ForStatefulSet(etcdStatefulSet)
+		WithPriorityClassName(cfg.PriorityClassName).WithResources(cfg.Resources).
+		WithTolerations(cfg.Tolerations).WithAffinity(cfg.Affinity).WithVolumeData(cfg.VolumeData).ForStatefulSet(etcdStatefulSet)
 
-	if err := apiclient.CreateOrUpdateStatefulSet(client, etcdStatefulSet); err != nil {
+	if etcdStatefulSet, err = apiclient.CreateOrUpdateStatefulSet(client, etcdStatefulSet); err != nil {
 		return fmt.Errorf("error when creating Etcd statefulset, err: %w", err)
+	}
+
+	ownerRef := *metav1.NewControllerRef(etcdStatefulSet, StatefulSetGVK)
+	if err := pdb.EnsurePodDisruptionBudget(client, util.KarmadaEtcdName(name), namespace, cfg.CommonSettings.PodDisruptionBudgetConfig, etcdStatefulSet.Spec.Template.Labels, []metav1.OwnerReference{ownerRef}); err != nil {
+		return fmt.Errorf("failed to ensure PDB for etcd component %s, err: %w", util.KarmadaEtcdName(name), err)
 	}
 
 	return nil
@@ -152,7 +163,7 @@ func createEtcdService(client clientset.Interface, name, namespace string) error
 
 // Setting Golang's secure cipher suites as etcd's cipher suites.
 // They are obtained by the return value of the function CipherSuites() under the go/src/crypto/tls/cipher_suites.go package.
-// Consistent with the Preferred values of k8s’s default cipher suites.
+// Consistent with the Preferred values of k8s's default cipher suites.
 func genEtcdCipherSuites() string {
 	return strings.Join(flag.PreferredTLSCipherNames(), ",")
 }

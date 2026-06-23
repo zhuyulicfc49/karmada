@@ -54,7 +54,7 @@ Karmada is an incubation project of the [Cloud Native Computing Foundation](http
 
 
 
-**Notice: this project is developed in continuation of Kubernetes [Federation v1](https://github.com/kubernetes-retired/federation) and [v2](https://github.com/kubernetes-sigs/kubefed). Some basic concepts are inherited from these two versions.**
+**Notice: This project is developed in continuation of Kubernetes [Federation v1](https://github.com/kubernetes-retired/federation) and [v2](https://github.com/kubernetes-sigs/kubefed). Some basic concepts are inherited from these two versions.**
 
 
 ## Architecture
@@ -191,12 +191,12 @@ please refer to the [Kubernetes Compatibility](https://karmada.io/docs/administr
 
 The following table shows the compatibility test results against the latest 10 Kubernetes versions:
 
-|                       | Kubernetes 1.33 | Kubernetes 1.32 | Kubernetes 1.31 | Kubernetes 1.30 | Kubernetes 1.29 | Kubernetes 1.28 | Kubernetes 1.27 | Kubernetes 1.26 | Kubernetes 1.25 | Kubernetes 1.24 | Kubernetes 1.23 |
+|                       | Kubernetes 1.35 | Kubernetes 1.34 | Kubernetes 1.33 | Kubernetes 1.32 | Kubernetes 1.31 | Kubernetes 1.30 | Kubernetes 1.29 | Kubernetes 1.28 | Kubernetes 1.27 | Kubernetes 1.26 | Kubernetes 1.25 |
 |-----------------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|
-| Karmada v1.12         |                 |                 | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               |
-| Karmada v1.13         |                 |                 | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               |
-| Karmada v1.14         |                 | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               |
-| Karmada HEAD (master) |                 | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               |
+| Karmada v1.16         |                 | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               |
+| Karmada v1.17         | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               |                 |
+| Karmada v1.18         | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               |                 |
+| Karmada HEAD (master) | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               |                 |
 
 Key:
 * `✓` Karmada and the Kubernetes version are exactly compatible.
@@ -222,19 +222,12 @@ If you have questions, feel free to reach out to us in the following ways:
 - [slack](https://cloud-native.slack.com/archives/C02MUF8QXUN) | [Join](https://slack.cncf.io/)
 - [twitter](https://twitter.com/karmada_io)
 
-## Talks and References
+## References
 
-|                  | Link                                                                                                                    |
-|------------------|-------------------------------------------------------------------------------------------------------------------------|
-| KubeCon(EU 2021) | [Beyond federation: automating multi-cloud workloads with K8s native APIs](https://www.youtube.com/watch?v=LJJoaGszBVk) |
-| KubeCon(EU 2022) | [Sailing Multi Cloud Traffic Management With Karmada](https://youtu.be/rzFbxeZQHWI)                                     |
-| KubeDay(Israel 2023)| [Simplifying Multi-cluster Kubernetes Management with Karmada](https://www.youtube.com/watch?v=WCrIhRNBZ9I) |
-| KubeCon(China 2023) | [Multi-Cloud Multi-Cluster HPA Helps Trip.com Group Deal with Business Downturn and Rapid Recovery](https://www.youtube.com/watch?v=uninSyVBKO4) |
-| KubeCon(China 2023) | [Break Through Cluster Boundaries to Autoscale Workloads Across Them on a Large Scale](https://www.youtube.com/watch?v=22W1yrEJjtQ) |
-| KubeCon(China 2023) | [Cross-Cluster Traffic Orchestration with eBPF](https://www.youtube.com/watch?v=e4GA5e-C7n0) |
-| KubeCon(China 2023) | [Non-Intrusively Enable OpenKruise and Argo Workflow in a Multi-Cluster Federation](https://www.youtube.com/watch?v=gcllTXRkz-E) |
-
-For blogs, please refer to [website](https://karmada.io/blog/).
+- To learn about companies and organizations using Karmada in production, please visit [Adopters page](https://karmada.io/adopters).
+- For commercial support, professional services, and consulting, please visit [Partners page](https://karmada.io/partners).
+- For talks and presentations about Karmada, please visit [Community Talks](https://github.com/karmada-io/community/tree/main/talks).
+- For blogs and articles, please visit [website](https://karmada.io/blog/).
 
 ## Contributing
 

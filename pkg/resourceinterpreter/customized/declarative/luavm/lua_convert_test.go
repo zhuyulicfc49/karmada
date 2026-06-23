@@ -50,13 +50,13 @@ func TestConvertLuaResultToStruct(t *testing.T) {
 
 	type args struct {
 		luaResult *lua.LTable
-		obj       interface{}
+		obj       any
 	}
 	tests := []struct {
 		name    string
 		args    args
 		wantErr bool
-		want    interface{}
+		want    any
 	}{
 		{
 			name: "obj is not a pointer",
@@ -232,11 +232,11 @@ func TestConvertLuaResultToUnstruct(t *testing.T) {
 			},
 			wantErr: false,
 			want: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"kind": "demo",
-					"spec": map[string]interface{}{
-						"NonEmptyMap":   map[string]interface{}{"test-key": `\"trap-string\":[]`},
-						"NonEmptySlice": []interface{}{`\"trap-string\":[]`},
+					"spec": map[string]any{
+						"NonEmptyMap":   map[string]any{"test-key": `\"trap-string\":[]`},
+						"NonEmptySlice": []any{`\"trap-string\":[]`},
 						"OtherField":    `\"trap-string\":[]`,
 					},
 				},
@@ -265,20 +265,20 @@ func TestConvertLuaResultToUnstruct(t *testing.T) {
 					return v
 				}(),
 				references: []*unstructured.Unstructured{{
-					Object: map[string]interface{}{
+					Object: map[string]any{
 						"kind": "demo",
-						"spec": map[string]interface{}{"EmptySlice": []interface{}{}, "EmptyMap": map[string]interface{}{}}},
+						"spec": map[string]any{"EmptySlice": []any{}, "EmptyMap": map[string]any{}}},
 				}},
 			},
 			wantErr: false,
 			want: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"kind": "demo",
-					"spec": map[string]interface{}{
-						"EmptyMap":      map[string]interface{}{},
-						"NonEmptyMap":   map[string]interface{}{"test-key": `\"trap-string\":[]`},
-						"EmptySlice":    []interface{}{},
-						"NonEmptySlice": []interface{}{`\"trap-string\":[]`},
+					"spec": map[string]any{
+						"EmptyMap":      map[string]any{},
+						"NonEmptyMap":   map[string]any{"test-key": `\"trap-string\":[]`},
+						"EmptySlice":    []any{},
+						"NonEmptySlice": []any{`\"trap-string\":[]`},
 						"OtherField":    `\"trap-string\":[]`,
 					},
 				},
@@ -323,6 +323,25 @@ func Test_traverseToFindEmptyField(t *testing.T) {
 			wants: wants{
 				fieldOfEmptySlice:  sets.New[string]("spec.bb"),
 				fieldOfEmptyStruct: sets.New[string]("spec.aa", "spec.dd.ee"),
+			},
+		},
+		{
+			name: "traverse to find empty field with special characters in keys",
+			args: args{
+				root: gjson.Parse(`{
+					"spec": {
+						"replicas": 3,
+						":colons": {},
+						".dots": {},
+						":.colonAndDot": {},
+						".:dotAndColon": {}
+					}
+				}`),
+				fieldPath: nil,
+			},
+			wants: wants{
+				fieldOfEmptySlice:  sets.New[string](),
+				fieldOfEmptyStruct: sets.New[string](`spec.\:colons`, `spec.\.dots`, `spec.\:\.colonAndDot`, `spec.\.\:dotAndColon`),
 			},
 		},
 	}
@@ -372,6 +391,32 @@ func Test_traverseToFindEmptyFieldNeededModify(t *testing.T) {
 			wants: wants{
 				fieldOfEmptySliceToStruct: sets.New[string]("spec.0.aa", "spec.0.dd.ee"),
 				fieldOfEmptySliceToDelete: sets.New[string]("spec.0.dd.ff"),
+			},
+		},
+		{
+			name: "traverse to find empty field needed modify with special characters in keys",
+			args: args{
+				root: gjson.Parse(`{
+					"spec": {
+						"replicas": 3,
+						":colons": [],
+						".dots": [],
+						":.colonAndDot": [],
+						".:dotAndColon": []
+					}
+				}`),
+				fieldPath:               nil,
+				fieldPathWithArrayIndex: nil,
+				fieldOfEmptySlice:       sets.New[string](`spec.\.dots`),
+				fieldOfEmptyStruct:      sets.New[string](`spec.\:colons`, `spec.\:\.colonAndDot`, `spec.\.\:dotAndColon`),
+			},
+			wants: wants{
+				fieldOfEmptySliceToStruct: sets.New[string](
+					`spec.\:colons`,
+					`spec.\:\.colonAndDot`,
+					`spec.\.\:dotAndColon`,
+				),
+				fieldOfEmptySliceToDelete: sets.New[string](),
 			},
 		},
 	}
@@ -434,6 +479,34 @@ func Test_convertEmptyObjectBackToEmptySlice(t *testing.T) {
 			},
 			wantErr: false,
 			want:    []byte(`[]`),
+		},
+		{
+			name: "convert empty object back to empty slice with special characters in keys",
+			args: args{
+				objBytes: []byte(`{"spec": {"replicas": 3, ":colons": [], ".dots": [], ":.colonAndDot": [], ".:dotAndColon": []}}`),
+				isStruct: true,
+				references: func() []*unstructured.Unstructured {
+					desired := &unstructured.Unstructured{}
+					observed := &unstructured.Unstructured{}
+					_ = json.Unmarshal([]byte(`{
+						"spec": {
+							"replicas": 3,
+							":colons": {},
+							":.colonAndDot": {},
+							".:dotAndColon": {}
+						}
+					}`), desired)
+					_ = json.Unmarshal([]byte(`{
+						"spec": {
+							"replicas": 3,
+							".dots": []
+						}
+					}`), observed)
+					return []*unstructured.Unstructured{desired, observed}
+				}(),
+			},
+			wantErr: false,
+			want:    []byte(`{"spec": {"replicas": 3, ":colons": {}, ".dots": [], ":.colonAndDot": {}, ".:dotAndColon": {}}}`),
 		},
 	}
 	for _, tt := range tests {

@@ -39,7 +39,7 @@ import (
 
 	"github.com/karmada-io/karmada/operator/cmd/operator/app/options"
 	operatorv1alpha1 "github.com/karmada-io/karmada/operator/pkg/apis/operator/v1alpha1"
-	ctrlctx "github.com/karmada-io/karmada/operator/pkg/controller/context"
+	operatorctx "github.com/karmada-io/karmada/operator/pkg/controller/context"
 	"github.com/karmada-io/karmada/operator/pkg/controller/karmada"
 	"github.com/karmada-io/karmada/operator/pkg/scheme"
 	"github.com/karmada-io/karmada/pkg/features"
@@ -123,7 +123,7 @@ func Run(ctx context.Context, o *options.Options) error {
 
 	ctrlmetrics.Registry.MustRegister(versionmetrics.NewBuildInfoCollector())
 
-	controllerCtx := ctrlctx.Context{
+	controllerCtx := operatorctx.Context{
 		Controllers: o.Controllers,
 		Manager:     manager,
 	}
@@ -142,7 +142,7 @@ func Run(ctx context.Context, o *options.Options) error {
 	return nil
 }
 
-var controllers = make(ctrlctx.Initializers)
+var controllers = make(operatorctx.Initializers)
 
 // controllersDisabledByDefault is the set of controllers which is disabled by default
 var controllersDisabledByDefault = sets.New[string]()
@@ -151,11 +151,11 @@ func init() {
 	controllers["karmada"] = startKarmadaController
 }
 
-func startKarmadaController(ctx ctrlctx.Context) (bool, error) {
+func startKarmadaController(ctx operatorctx.Context) (bool, error) {
 	ctrl := &karmada.Controller{
 		Config:        ctx.Manager.GetConfig(),
 		Client:        ctx.Manager.GetClient(),
-		EventRecorder: ctx.Manager.GetEventRecorderFor(karmada.ControllerName),
+		EventRecorder: ctx.Manager.GetEventRecorderFor(karmada.ControllerName), //nolint:staticcheck // Note: GetEventRecorderFor is deprecated in controller-runtime v0.23.0 in favor of GetEventRecorder. This changes event API from v1 events to events.k8s.io. We need to migrate carefully, especially considering the impact on users and RBAC permission changes in installation/deployment tools.
 	}
 	if err := ctrl.SetupWithManager(ctx.Manager); err != nil {
 		klog.ErrorS(err, "unable to setup with manager", "controller", karmada.ControllerName)

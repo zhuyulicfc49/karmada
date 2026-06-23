@@ -114,7 +114,7 @@ spec:
             - --leader-elect-resource-namespace={{ include "karmada.namespace" . }}
             - --metrics-bind-address=$(POD_IP):8080
             - --health-probe-bind-address=$(POD_IP):10357
-            - --v=4
+            - --v={{ .Values.agent.logVerbosity }}
           livenessProbe:
             httpGet:
               path: /healthz

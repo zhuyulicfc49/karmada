@@ -61,6 +61,7 @@ func WaitPodPresentOnClusterFitWith(cluster, namespace, name string, fit func(po
 	gomega.Eventually(func() bool {
 		pod, err := clusterClient.CoreV1().Pods(namespace).Get(context.TODO(), name, metav1.GetOptions{})
 		if err != nil {
+			klog.Errorf("Failed to get Pod(%s/%s) on cluster(%s), err: %v", namespace, name, cluster, err)
 			return false
 		}
 		return fit(pod)
@@ -132,7 +133,7 @@ func WaitPodDisappearOnClusters(clusters []string, namespace, name string) {
 }
 
 // UpdatePodWithPatch update pod with patch bytes.
-func UpdatePodWithPatch(client kubernetes.Interface, namespace, name string, patch []map[string]interface{}, patchType types.PatchType) {
+func UpdatePodWithPatch(client kubernetes.Interface, namespace, name string, patch []map[string]any, patchType types.PatchType) {
 	ginkgo.By(fmt.Sprintf("Updating pod(%s/%s)", namespace, name), func() {
 		bytes, err := json.Marshal(patch)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())

@@ -23,6 +23,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/klog/v2"
 
 	clusterv1alpha1 "github.com/karmada-io/karmada/pkg/apis/cluster/v1alpha1"
 	policyv1alpha1 "github.com/karmada-io/karmada/pkg/apis/policy/v1alpha1"
@@ -118,8 +119,9 @@ func GetNoExecuteTaints(taints []corev1.Taint) []corev1.Taint {
 	return result
 }
 
-// GetMinTolerationTime returns minimal toleration time from the given slice, or -1 if it's infinite.
-func GetMinTolerationTime(noExecuteTaints []corev1.Taint, usedTolerations []corev1.Toleration) time.Duration {
+// GetMinTolerationTimeWithCurrentTime returns minimal toleration time from the given slice, or -1 if it's infinite.
+// This function accepts a currentTime parameter to enable deterministic testing.
+func GetMinTolerationTimeWithCurrentTime(noExecuteTaints []corev1.Taint, usedTolerations []corev1.Toleration, currentTime time.Time) time.Duration {
 	if len(noExecuteTaints) == 0 {
 		return -1
 	}
@@ -140,7 +142,15 @@ func GetMinTolerationTime(noExecuteTaints []corev1.Taint, usedTolerations []core
 				continue
 			}
 			timeAdded := *noExecuteTaints[j].TimeAdded
-			if usedTolerations[i].ToleratesTaint(&noExecuteTaints[j]) {
+			// Note: Kubernetes v1.35 extended the toleration operators by introducing Lt and Gt,
+			// and extended the ToleratesTaint method to include logger and enableComparisonOperators parameters.
+			// PR: https://github.com/kubernetes/kubernetes/pull/134665
+			//
+			// TODO(@RainbowMango): Karmada requires more detailed design to support these new operators.
+			// For now, we disable the comparison operators (enableComparisonOperators=false) to maintain
+			// backward-compatible behavior.
+			// With this flag set to false, the logger parameter is not actually used.
+			if usedTolerations[i].ToleratesTaint(klog.Background(), &noExecuteTaints[j], false) {
 				triggerTimes = append(triggerTimes, timeAdded.Add(time.Duration(tolerationSeconds)*time.Second))
 			}
 		}
@@ -160,11 +170,11 @@ func GetMinTolerationTime(noExecuteTaints []corev1.Taint, usedTolerations []core
 	}
 
 	// If trigger time is up, don't tolerate.
-	if t.Before(time.Now()) {
+	if t.Before(currentTime) {
 		return 0
 	}
 
-	return time.Until(t)
+	return t.Sub(currentTime)
 }
 
 // GetMatchingTolerations returns true and list of Tolerations matching all Taints if all are tolerated, or false otherwise.
@@ -179,7 +189,15 @@ func GetMatchingTolerations(taints []corev1.Taint, tolerations []corev1.Tolerati
 	for i := range taints {
 		tolerated := false
 		for j := range tolerations {
-			if tolerations[j].ToleratesTaint(&taints[i]) {
+			// Note: Kubernetes v1.35 extended the toleration operators by introducing Lt and Gt,
+			// and extended the ToleratesTaint method to include logger and enableComparisonOperators parameters.
+			// PR: https://github.com/kubernetes/kubernetes/pull/134665
+			//
+			// TODO(@RainbowMango): Karmada requires more detailed design to support these new operators.
+			// For now, we disable the comparison operators (enableComparisonOperators=false) to maintain
+			// backward-compatible behavior.
+			// With this flag set to false, the logger parameter is not actually used.
+			if tolerations[j].ToleratesTaint(klog.Background(), &taints[i], false) {
 				result = append(result, tolerations[j])
 				tolerated = true
 				break

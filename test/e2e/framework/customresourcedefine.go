@@ -29,6 +29,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/klog/v2"
 
+	clusterv1alpha1 "github.com/karmada-io/karmada/pkg/apis/cluster/v1alpha1"
 	karmada "github.com/karmada-io/karmada/pkg/generated/clientset/versioned"
 	"github.com/karmada-io/karmada/pkg/util/helper"
 )
@@ -73,9 +74,31 @@ func WaitCRDPresentOnClusters(client karmada.Interface, clusters []string, crdAP
 			gomega.Eventually(func(g gomega.Gomega) (bool, error) {
 				cluster, err := FetchCluster(client, clusterName)
 				g.Expect(err).NotTo(gomega.HaveOccurred())
-				return helper.IsAPIEnabled(cluster.Status.APIEnablements, crdAPIVersion, crdKind), nil
+				return cluster.APIEnablement(schema.FromAPIVersionAndKind(crdAPIVersion, crdKind)) == clusterv1alpha1.APIEnabled, nil
 			}, PollTimeout, PollInterval).Should(gomega.Equal(true))
 		}
+	})
+}
+
+// WaitCRDEstablished waits until the CustomResourceDefinition has the Established condition on the control plane.
+func WaitCRDEstablished(client dynamic.Interface, name string) {
+	WaitCRDFitWith(client, name, func(crd *apiextensionsv1.CustomResourceDefinition) bool {
+		for _, cond := range crd.Status.Conditions {
+			if cond.Type == apiextensionsv1.Established && cond.Status == apiextensionsv1.ConditionTrue {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+// WaitCRDDisappeared waits for the CustomResourceDefinition to be absent from the control plane until timeout.
+func WaitCRDDisappeared(client dynamic.Interface, name string) {
+	ginkgo.By(fmt.Sprintf("Waiting for crd(%s) to be absent from control plane", name), func() {
+		gomega.Eventually(func() bool {
+			_, err := client.Resource(crdGVR).Get(context.TODO(), name, metav1.GetOptions{})
+			return apierrors.IsNotFound(err)
+		}, PollTimeout, PollInterval).Should(gomega.Equal(true))
 	})
 }
 
@@ -101,10 +124,12 @@ func WaitCRDFitWith(client dynamic.Interface, crdName string, fit func(crd *apie
 		crd := &apiextensionsv1.CustomResourceDefinition{}
 		unstructured, err := client.Resource(crdGVR).Get(context.TODO(), crdName, metav1.GetOptions{})
 		if err != nil {
+			klog.Errorf("Failed to get CustomResourceDefinition(%s), err: %v", crdName, err)
 			return false
 		}
 		err = helper.ConvertToTypedObject(unstructured, crd)
 		if err != nil {
+			klog.Errorf("Failed to convert CustomResourceDefinition(%s) to typed object, err: %v", crdName, err)
 			return false
 		}
 		return fit(crd)

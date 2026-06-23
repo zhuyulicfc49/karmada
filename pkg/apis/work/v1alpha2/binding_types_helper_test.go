@@ -20,6 +20,8 @@ import (
 	"reflect"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/utils/ptr"
 
 	policyv1alpha1 "github.com/karmada-io/karmada/pkg/apis/policy/v1alpha1"
@@ -174,7 +176,7 @@ func TestResourceBindingSpec_GracefulEvictCluster(t *testing.T) {
 			},
 			EvictEvent: GracefulEvictionTask{
 				FromCluster: "m1",
-				PurgeMode:   policyv1alpha1.Immediately,
+				PurgeMode:   policyv1alpha1.PurgeModeDirectly,
 				Reason:      EvictionReasonTaintUntolerated,
 				Message:     "graceful eviction",
 				Producer:    EvictionProducerTaintManager,
@@ -184,7 +186,7 @@ func TestResourceBindingSpec_GracefulEvictCluster(t *testing.T) {
 				GracefulEvictionTasks: []GracefulEvictionTask{
 					{
 						FromCluster: "m1",
-						PurgeMode:   policyv1alpha1.Immediately,
+						PurgeMode:   policyv1alpha1.PurgeModeDirectly,
 						Replicas:    ptr.To[int32](1),
 						Reason:      EvictionReasonTaintUntolerated,
 						Message:     "graceful eviction",
@@ -226,7 +228,7 @@ func TestResourceBindingSpec_GracefulEvictCluster(t *testing.T) {
 			},
 			EvictEvent: GracefulEvictionTask{
 				FromCluster: "m3",
-				PurgeMode:   policyv1alpha1.Graciously,
+				PurgeMode:   policyv1alpha1.PurgeModeGracefully,
 				Reason:      EvictionReasonTaintUntolerated,
 				Message:     "graceful eviction",
 				Producer:    EvictionProducerTaintManager,
@@ -236,7 +238,7 @@ func TestResourceBindingSpec_GracefulEvictCluster(t *testing.T) {
 				GracefulEvictionTasks: []GracefulEvictionTask{
 					{
 						FromCluster: "m3",
-						PurgeMode:   policyv1alpha1.Graciously,
+						PurgeMode:   policyv1alpha1.PurgeModeGracefully,
 						Replicas:    ptr.To[int32](3),
 						Reason:      EvictionReasonTaintUntolerated,
 						Message:     "graceful eviction",
@@ -253,7 +255,7 @@ func TestResourceBindingSpec_GracefulEvictCluster(t *testing.T) {
 			},
 			EvictEvent: GracefulEvictionTask{
 				FromCluster: "m3",
-				PurgeMode:   policyv1alpha1.Graciously,
+				PurgeMode:   policyv1alpha1.PurgeModeGracefully,
 				Reason:      EvictionReasonTaintUntolerated,
 				Message:     "graceful eviction",
 				Producer:    EvictionProducerTaintManager,
@@ -266,7 +268,7 @@ func TestResourceBindingSpec_GracefulEvictCluster(t *testing.T) {
 					},
 					{
 						FromCluster: "m3",
-						PurgeMode:   policyv1alpha1.Graciously,
+						PurgeMode:   policyv1alpha1.PurgeModeGracefully,
 						Replicas:    ptr.To[int32](3),
 						Reason:      EvictionReasonTaintUntolerated,
 						Message:     "graceful eviction",
@@ -296,7 +298,7 @@ func TestResourceBindingSpec_GracefulEvictCluster(t *testing.T) {
 			},
 			EvictEvent: GracefulEvictionTask{
 				FromCluster: "m1",
-				PurgeMode:   policyv1alpha1.Graciously,
+				PurgeMode:   policyv1alpha1.PurgeModeGracefully,
 				Replicas:    ptr.To[int32](1),
 				Reason:      EvictionReasonTaintUntolerated,
 				Message:     "graceful eviction v2",
@@ -416,7 +418,7 @@ func TestResourceBindingSpec_SchedulingSuspended(t *testing.T) {
 			name: "false Scheduling results in not suspended",
 			rbSpec: &ResourceBindingSpec{
 				Suspension: &Suspension{
-					Scheduling: ptr.To(false),
+					Scheduling: new(false),
 				},
 			},
 			Suspended: false,
@@ -425,7 +427,7 @@ func TestResourceBindingSpec_SchedulingSuspended(t *testing.T) {
 			name: "true Scheduling results in suspended",
 			rbSpec: &ResourceBindingSpec{
 				Suspension: &Suspension{
-					Scheduling: ptr.To(true),
+					Scheduling: new(true),
 				},
 			},
 			Suspended: true,
@@ -437,6 +439,87 @@ func TestResourceBindingSpec_SchedulingSuspended(t *testing.T) {
 			suspended := tc.rbSpec.SchedulingSuspended()
 			if suspended != tc.Suspended {
 				t.Fatalf("SchedulingSuspended(): expected: %t, but got: %t", tc.Suspended, suspended)
+			}
+		})
+	}
+}
+
+func TestResourceBindingSpec_IsWorkload(t *testing.T) {
+	tests := []struct {
+		name string
+		spec *ResourceBindingSpec
+		want bool
+	}{
+		{
+			name: "binding an object with replicas",
+			spec: &ResourceBindingSpec{
+				Replicas: 1,
+			},
+			want: true,
+		},
+		{
+			name: "binding an object when replicas is 0",
+			spec: &ResourceBindingSpec{
+				Replicas: 0,
+			},
+			want: false,
+		},
+		{
+			name: "binding an object with ReplicaRequirement",
+			spec: &ResourceBindingSpec{
+				ReplicaRequirements: &ReplicaRequirements{
+					ResourceRequest: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("100m"),
+						corev1.ResourceMemory: resource.MustParse("200Mi"),
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "binding an object with no ReplicaRequirement",
+			spec: &ResourceBindingSpec{
+				ReplicaRequirements: nil,
+			},
+			want: false,
+		},
+		{
+			name: "binding an object with single component",
+			spec: &ResourceBindingSpec{
+				Components: []Component{
+					{
+						Name:                "comp1",
+						Replicas:            1,
+						ReplicaRequirements: nil,
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "binding an object with multiple components",
+			spec: &ResourceBindingSpec{
+				Components: []Component{
+					{
+						Name:                "comp1",
+						Replicas:            1,
+						ReplicaRequirements: nil,
+					},
+					{
+						Name:                "comp2",
+						Replicas:            1,
+						ReplicaRequirements: nil,
+					},
+				},
+			},
+			want: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ret := tt.spec.IsWorkload()
+			if ret != tt.want {
+				t.Fatalf("want %v, got %v", tt.want, ret)
 			}
 		})
 	}

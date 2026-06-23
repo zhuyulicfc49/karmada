@@ -19,6 +19,7 @@ package store
 import (
 	"encoding/base64"
 	"encoding/json"
+	"maps"
 	"sort"
 	"sync"
 
@@ -27,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/klog/v2"
 
 	clusterv1alpha1 "github.com/karmada-io/karmada/pkg/apis/cluster/v1alpha1"
 )
@@ -83,9 +85,7 @@ func (m *multiClusterResourceVersion) clone() *multiClusterResourceVersion {
 		isZero: m.isZero,
 		rvs:    make(map[string]string, len(m.rvs)),
 	}
-	for k, v := range m.rvs {
-		ret.rvs[k] = v
-	}
+	maps.Copy(ret.rvs, m.rvs)
 	return ret
 }
 
@@ -214,11 +214,9 @@ func (w *watchMux) Start() {
 	wg := sync.WaitGroup{}
 	for i := range w.sources {
 		source := w.sources[i]
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			w.startWatchSource(source.watcher, source.decorator)
-		}()
+		})
 	}
 
 	go func() {
@@ -276,6 +274,65 @@ func (w *watchMux) startWatchSource(source watch.Interface, decorator func(watch
 		case w.result <- copyEvent:
 		}
 	}
+}
+
+// Check if watchMuxWithInvalidation implements watch.Interface
+var _ watch.Interface = &watchMuxWithInvalidation{}
+
+// watchMuxWithInvalidation extends watchMux with the ability to send invalidation events
+type watchMuxWithInvalidation struct {
+	*watchMux
+	stopped chan struct{} // Signals when the watch is stopped
+}
+
+func newWatchMuxWithInvalidation() *watchMuxWithInvalidation {
+	return &watchMuxWithInvalidation{
+		watchMux: newWatchMux(),
+		stopped:  make(chan struct{}),
+	}
+}
+
+// Start extends the base Start method to handle the stopped channel
+func (w *watchMuxWithInvalidation) Start() {
+	w.watchMux.Start()
+
+	// Close stopped channel when the watch ends
+	go func() {
+		<-w.watchMux.done
+		close(w.stopped)
+	}()
+}
+
+// Invalidate sends an error event to trigger client reconnection
+func (w *watchMuxWithInvalidation) Invalidate() {
+	select {
+	case <-w.watchMux.done:
+		// Watch already stopped, nothing to do
+		return
+	default:
+	}
+
+	klog.V(2).Infof("Invalidating watch: cluster topology changed, closing watch connection")
+
+	// Directly stop the watch.
+	// This will:
+	// 1. Close the w.watchMux.done channel.
+	// 2. Cause all source watchers to stop.
+	// 3. Close the w.watchMux.result channel.
+	// 4. ResultChan() on the client side will return ok=false when reading from it.
+	w.Stop()
+
+	klog.V(4).Infof("Watch connection closed successfully")
+}
+
+// StoppedCh returns a channel that is closed when the watch is stopped
+func (w *watchMuxWithInvalidation) StoppedCh() <-chan struct{} {
+	return w.stopped
+}
+
+// Stop extends the base Stop method
+func (w *watchMuxWithInvalidation) Stop() {
+	w.watchMux.Stop()
 }
 
 // MultiNamespace contains multiple namespaces.

@@ -50,6 +50,7 @@ import (
 	clusterv1alpha1 "github.com/karmada-io/karmada/pkg/apis/cluster/v1alpha1"
 	workv1alpha1 "github.com/karmada-io/karmada/pkg/apis/work/v1alpha1"
 	"github.com/karmada-io/karmada/pkg/controllers/ctrlutil"
+	"github.com/karmada-io/karmada/pkg/features"
 	"github.com/karmada-io/karmada/pkg/sharedcli/ratelimiterflag"
 	"github.com/karmada-io/karmada/pkg/util"
 	"github.com/karmada-io/karmada/pkg/util/fedinformer"
@@ -64,6 +65,9 @@ import (
 const ServiceExportControllerName = "service-export-controller"
 
 // ServiceExportController is to sync ServiceExport and report EndpointSlices of exported service to control-plane.
+// It creates Informers for clusters where ServiceExport resources have been propagated,
+// registers EventHandlers for ServiceExport and EndpointSlice in those clusters,
+// and then asynchronously processes ServiceExport and EndpointSlice events.
 type ServiceExportController struct {
 	client.Client
 	EventRecorder               record.EventRecorder
@@ -81,8 +85,12 @@ type ServiceExportController struct {
 	// "member1": instance of ResourceEventHandler
 	eventHandlers sync.Map
 	// worker process resources periodic from rateLimitingQueue.
-	worker             util.AsyncWorker
+	worker             util.AsyncPriorityWorker
 	RateLimiterOptions ratelimiterflag.Options
+
+	// epsWorkListFunc is used to mock the work list provider to return a specific work list,
+	// it will be overridden by the test.
+	epsWorkListFunc workListProvider
 }
 
 var (
@@ -94,7 +102,7 @@ var (
 
 // Reconcile performs a full reconciliation for the object referred to by the Request.
 func (c *ServiceExportController) Reconcile(ctx context.Context, req controllerruntime.Request) (controllerruntime.Result, error) {
-	klog.V(4).Infof("Reconciling Work %s", req.NamespacedName.String())
+	klog.V(4).InfoS("Reconciling Work", "namespace", req.NamespacedName.Namespace, "name", req.NamespacedName.Name)
 
 	work := &workv1alpha1.Work{}
 	if err := c.Client.Get(ctx, req.NamespacedName, work); err != nil {
@@ -112,25 +120,27 @@ func (c *ServiceExportController) Reconcile(ctx context.Context, req controllerr
 		return controllerruntime.Result{}, nil
 	}
 
+	// Controller should only handle ServiceExport Works, reduces noise and prevents unnecessary processing.
 	if !util.IsWorkContains(work.Spec.Workload.Manifests, serviceExportGVK) {
 		return controllerruntime.Result{}, nil
 	}
 
 	clusterName, err := names.GetClusterName(work.Namespace)
 	if err != nil {
-		klog.Errorf("Failed to get member cluster name for work %s/%s", work.Namespace, work.Name)
+		klog.ErrorS(err, "Failed to get member cluster name for work", "namespace", work.Namespace, "workName", work.Name)
 		return controllerruntime.Result{}, err
 	}
 
 	cluster, err := util.GetCluster(c.Client, clusterName)
 	if err != nil {
-		klog.Errorf("Failed to get the given member cluster %s", clusterName)
+		klog.ErrorS(err, "Failed to get the given member cluster", "cluster", clusterName)
 		return controllerruntime.Result{}, err
 	}
 
 	if !util.IsClusterReady(&cluster.Status) {
-		klog.Errorf("Stop sync work(%s/%s) for cluster(%s) as cluster not ready.", work.Namespace, work.Name, cluster.Name)
-		return controllerruntime.Result{}, fmt.Errorf("cluster(%s) not ready", cluster.Name)
+		err := fmt.Errorf("cluster(%s) not ready", cluster.Name)
+		klog.ErrorS(err, "Stop sync work for cluster as cluster not ready.", "namespace", work.Namespace, "workName", work.Name, "cluster", cluster.Name)
+		return controllerruntime.Result{}, err
 	}
 
 	return controllerruntime.Result{}, c.buildResourceInformers(cluster)
@@ -138,7 +148,11 @@ func (c *ServiceExportController) Reconcile(ctx context.Context, req controllerr
 
 // SetupWithManager creates a controller and register to controller manager.
 func (c *ServiceExportController) SetupWithManager(mgr controllerruntime.Manager) error {
-	return controllerruntime.NewControllerManagedBy(mgr).Named(ServiceExportControllerName).For(&workv1alpha1.Work{}, builder.WithPredicates(c.PredicateFunc)).
+	// Set the default work list provider, it will be overridden by the test.
+	c.epsWorkListFunc = c.collectedEpsWorkListProvider
+	return controllerruntime.NewControllerManagedBy(mgr).
+		Named(ServiceExportControllerName).
+		For(&workv1alpha1.Work{}, builder.WithPredicates(c.PredicateFunc)).
 		WithOptions(controller.Options{
 			RateLimiter: ratelimiterflag.DefaultControllerRateLimiter[controllerruntime.Request](c.RateLimiterOptions),
 		}).
@@ -148,13 +162,16 @@ func (c *ServiceExportController) SetupWithManager(mgr controllerruntime.Manager
 // RunWorkQueue initializes worker and run it, worker will process resource asynchronously.
 func (c *ServiceExportController) RunWorkQueue() {
 	workerOptions := util.Options{
-		Name:          "service-export",
-		KeyFunc:       nil,
-		ReconcileFunc: c.syncServiceExportOrEndpointSlice,
+		Name:             "service-export",
+		KeyFunc:          nil,
+		ReconcileFunc:    c.syncServiceExportOrEndpointSlice,
+		UsePriorityQueue: features.FeatureGate.Enabled(features.ControllerPriorityQueue),
 	}
 	c.worker = util.NewAsyncWorker(workerOptions)
 	c.worker.Run(c.Context, c.WorkerNumber)
 
+	// TODO(@XiShanYongYe-Chang): Need to re-examine whether this call is necessary.
+	// If it is necessary, clarify the reason; otherwise, delete this call.
 	go c.enqueueReportedEpsServiceExport()
 }
 
@@ -165,7 +182,7 @@ func (c *ServiceExportController) enqueueReportedEpsServiceExport() {
 			indexregistry.WorkIndexByFieldSuspendDispatching: "true",
 		})
 		if err != nil {
-			klog.Errorf("Failed to list collected EndpointSlices Work from member clusters: %v", err)
+			klog.ErrorS(err, "Failed to list collected EndpointSlices Work from member clusters")
 			return false, nil
 		}
 		return true, nil
@@ -208,23 +225,22 @@ func (c *ServiceExportController) syncServiceExportOrEndpointSlice(key util.Queu
 	ctx := context.Background()
 	fedKey, ok := key.(keys.FederatedKey)
 	if !ok {
-		klog.Errorf("Failed to sync serviceExport as invalid key: %v", key)
-		return fmt.Errorf("invalid key")
+		err := fmt.Errorf("invalid key")
+		klog.ErrorS(err, "Failed to sync serviceExport as invalid key", "key", key)
+		return err
 	}
 
-	klog.V(4).Infof("Begin to sync %s", fedKey)
+	klog.V(4).InfoS("Begin to sync", "key", fedKey)
 
 	switch fedKey.Kind {
 	case util.ServiceExportKind:
 		if err := c.handleServiceExportEvent(ctx, fedKey); err != nil {
-			klog.Errorf("Failed to handle serviceExport(%s) event, Error: %v",
-				fedKey.NamespaceKey(), err)
+			klog.ErrorS(err, "Failed to handle serviceExport event", "serviceExport", fedKey.NamespaceKey())
 			return err
 		}
 	case util.EndpointSliceKind:
 		if err := c.handleEndpointSliceEvent(ctx, fedKey); err != nil {
-			klog.Errorf("Failed to handle endpointSlice(%s) event, Error: %v",
-				fedKey.NamespaceKey(), err)
+			klog.ErrorS(err, "Failed to handle endpointSlice event", "endpointSlice", fedKey.NamespaceKey())
 			return err
 		}
 	}
@@ -235,20 +251,20 @@ func (c *ServiceExportController) syncServiceExportOrEndpointSlice(key util.Queu
 func (c *ServiceExportController) buildResourceInformers(cluster *clusterv1alpha1.Cluster) error {
 	err := c.registerInformersAndStart(cluster)
 	if err != nil {
-		klog.Errorf("Failed to register informer for Cluster %s. Error: %v.", cluster.Name, err)
+		klog.ErrorS(err, "Failed to register informer for Cluster", "cluster", cluster.Name)
 		return err
 	}
 	return nil
 }
 
-// registerInformersAndStart builds informer manager for cluster if it doesn't exist, then constructs informers for gvr
-// and start it.
+// registerInformersAndStart builds informer manager for cluster if it doesn't exist, then
+// constructs informers for gvr and start it.
 func (c *ServiceExportController) registerInformersAndStart(cluster *clusterv1alpha1.Cluster) error {
 	singleClusterInformerManager := c.InformerManager.GetSingleClusterManager(cluster.Name)
 	if singleClusterInformerManager == nil {
 		dynamicClusterClient, err := c.ClusterDynamicClientSetFunc(cluster.Name, c.Client, c.ClusterClientOption)
 		if err != nil {
-			klog.Errorf("Failed to build dynamic cluster client for cluster %s.", cluster.Name)
+			klog.ErrorS(err, "Failed to build dynamic cluster client for cluster.", "cluster", cluster.Name)
 			return err
 		}
 		singleClusterInformerManager = c.InformerManager.ForCluster(dynamicClusterClient.ClusterName, dynamicClusterClient.DynamicClientSet, 0)
@@ -273,6 +289,7 @@ func (c *ServiceExportController) registerInformersAndStart(cluster *clusterv1al
 	c.InformerManager.Start(cluster.Name)
 
 	if err := func() error {
+		// this call is necessary; otherwise, `IsInformerSynced` will always return false.
 		synced := c.InformerManager.WaitForCacheSyncWithTimeout(cluster.Name, c.ClusterCacheSyncTimeout.Duration)
 		if synced == nil {
 			return fmt.Errorf("no informerFactory for cluster %s exist", cluster.Name)
@@ -284,8 +301,7 @@ func (c *ServiceExportController) registerInformersAndStart(cluster *clusterv1al
 		}
 		return nil
 	}(); err != nil {
-		klog.Errorf("Failed to sync cache for cluster: %s, error: %v", cluster.Name, err)
-		c.InformerManager.Stop(cluster.Name)
+		klog.ErrorS(err, "Failed to sync cache for cluster", "cluster", cluster.Name)
 		return err
 	}
 
@@ -304,25 +320,26 @@ func (c *ServiceExportController) getEventHandler(clusterName string) cache.Reso
 	return eventHandler
 }
 
-func (c *ServiceExportController) genHandlerAddFunc(clusterName string) func(obj interface{}) {
-	return func(obj interface{}) {
+func (c *ServiceExportController) genHandlerAddFunc(clusterName string) func(obj any, isInInitialList bool) {
+	return func(obj any, isInInitialList bool) {
 		curObj := obj.(runtime.Object)
 		key, err := keys.FederatedKeyFunc(clusterName, curObj)
 		if err != nil {
-			klog.Warningf("Failed to generate key for obj: %s", curObj.GetObjectKind().GroupVersionKind())
+			klog.ErrorS(err, "Failed to generate key for obj", "gvk", curObj.GetObjectKind().GroupVersionKind())
 			return
 		}
-		c.worker.Add(key)
+		priority := util.ItemPriorityIfInInitialList(isInInitialList)
+		c.worker.AddWithOpts(util.AddOpts{Priority: priority}, key)
 	}
 }
 
-func (c *ServiceExportController) genHandlerUpdateFunc(clusterName string) func(oldObj, newObj interface{}) {
-	return func(oldObj, newObj interface{}) {
+func (c *ServiceExportController) genHandlerUpdateFunc(clusterName string) func(oldObj, newObj any) {
+	return func(oldObj, newObj any) {
 		curObj := newObj.(runtime.Object)
 		if !reflect.DeepEqual(oldObj, newObj) {
 			key, err := keys.FederatedKeyFunc(clusterName, curObj)
 			if err != nil {
-				klog.Warningf("Failed to generate key for obj: %s", curObj.GetObjectKind().GroupVersionKind())
+				klog.ErrorS(err, "Failed to generate key for obj", "gvk", curObj.GetObjectKind().GroupVersionKind())
 				return
 			}
 			c.worker.Add(key)
@@ -330,8 +347,8 @@ func (c *ServiceExportController) genHandlerUpdateFunc(clusterName string) func(
 	}
 }
 
-func (c *ServiceExportController) genHandlerDeleteFunc(clusterName string) func(obj interface{}) {
-	return func(obj interface{}) {
+func (c *ServiceExportController) genHandlerDeleteFunc(clusterName string) func(obj any) {
+	return func(obj any) {
 		if deleted, ok := obj.(cache.DeletedFinalStateUnknown); ok {
 			// This object might be stale but ok for our current usage.
 			obj = deleted.Obj
@@ -342,7 +359,7 @@ func (c *ServiceExportController) genHandlerDeleteFunc(clusterName string) func(
 		oldObj := obj.(runtime.Object)
 		key, err := keys.FederatedKeyFunc(clusterName, oldObj)
 		if err != nil {
-			klog.Warningf("Failed to generate key for obj: %s", oldObj.GetObjectKind().GroupVersionKind())
+			klog.ErrorS(err, "Failed to generate key for obj", "gvk", oldObj.GetObjectKind().GroupVersionKind())
 			return
 		}
 		c.worker.Add(key)
@@ -363,11 +380,11 @@ func (c *ServiceExportController) handleServiceExportEvent(ctx context.Context, 
 
 	// Even though the EndpointSlice will be synced when dealing with EndpointSlice events, thus the 'report' here may
 	// be redundant, but it helps to avoid a corner case:
-	// If skip report here, after ServiceExport deletion and re-creation, if no EndpointSlice changes, we didn't get a
-	// change to sync.
+	// When ServiceExport is created after Service in member cluster, and EndpointSlice events have been processed,
+	// if we don't handle the ServiceExport event, the EndpointSlice will not be collected to the control plane,
+	// unless a new EndpointSlice event is received.
 	if err = c.reportEndpointSliceWithServiceExportCreate(ctx, serviceExportKey); err != nil {
-		klog.Errorf("Failed to handle ServiceExport(%s) event, Error: %v",
-			serviceExportKey.NamespaceKey(), err)
+		klog.ErrorS(err, "Failed to handle ServiceExport event", "namespace", serviceExportKey.Namespace, "name", serviceExportKey.Name)
 		return err
 	}
 
@@ -386,9 +403,13 @@ func (c *ServiceExportController) handleEndpointSliceEvent(ctx context.Context, 
 		return err
 	}
 
+	// Exclude EndpointSlice resources that are managed by Karmada system to avoid duplicate reporting.
+	if helper.IsEndpointSliceManagedByKarmada(endpointSliceObj.GetLabels()) {
+		return nil
+	}
+
 	if err = c.reportEndpointSliceWithEndpointSliceCreateOrUpdate(ctx, endpointSliceKey.Cluster, endpointSliceObj); err != nil {
-		klog.Errorf("Failed to handle endpointSlice(%s) event, Error: %v",
-			endpointSliceKey.NamespaceKey(), err)
+		klog.ErrorS(err, "Failed to handle endpointSlice event", "namespace", endpointSliceKey.Namespace, "name", endpointSliceKey.Name)
 		return err
 	}
 
@@ -396,6 +417,8 @@ func (c *ServiceExportController) handleEndpointSliceEvent(ctx context.Context, 
 }
 
 // reportEndpointSliceWithServiceExportCreate reports the referencing service's EndpointSlice.
+// The informer for EndpointSlice is created dynamically in Reconcile() when ServiceExport Works are detected.
+// If informer isn't synced yet, we return error to trigger retry.
 func (c *ServiceExportController) reportEndpointSliceWithServiceExportCreate(ctx context.Context, serviceExportKey keys.FederatedKey) error {
 	var (
 		endpointSliceObjects []runtime.Object
@@ -405,7 +428,17 @@ func (c *ServiceExportController) reportEndpointSliceWithServiceExportCreate(ctx
 
 	singleClusterManager := c.InformerManager.GetSingleClusterManager(serviceExportKey.Cluster)
 	if singleClusterManager == nil {
+		// No informer manager for this cluster yet - this shouldn't happen
+		// if Reconcile() has run, but handle gracefully
 		return nil
+	}
+
+	// Before retrieving EndpointSlice objects from the informer, ensure the informer cache is synced.
+	// This is necessary because the informer for EndpointSlice is created dynamically in the Reconcile() routine
+	// when a Work resource containing an ServiceExport is detected for the cluster. If the informer is not yet synced,
+	// return an error and wait a retry at the next time.
+	if !singleClusterManager.IsInformerSynced(endpointSliceGVR) {
+		return fmt.Errorf("the informer for cluster %s has not been synced, wait a retry at the next time", serviceExportKey.Cluster)
 	}
 
 	endpointSliceLister := singleClusterManager.Lister(endpointSliceGVR)
@@ -421,21 +454,24 @@ func (c *ServiceExportController) reportEndpointSliceWithServiceExportCreate(ctx
 	}
 
 	for index := range endpointSliceObjects {
-		if err = reportEndpointSlice(ctx, c.Client, endpointSliceObjects[index].(*unstructured.Unstructured), serviceExportKey.Cluster); err != nil {
+		endpointSlice := endpointSliceObjects[index].(*unstructured.Unstructured)
+		// Exclude EndpointSlice resources that are managed by Karmada system to avoid duplicate reporting.
+		if helper.IsEndpointSliceManagedByKarmada(endpointSlice.GetLabels()) {
+			continue
+		}
+
+		if err = reportEndpointSlice(ctx, c.Client, endpointSlice, serviceExportKey.Cluster); err != nil {
 			errs = append(errs, err)
 		}
 	}
 	return utilerrors.NewAggregate(errs)
 }
 
-func (c *ServiceExportController) removeOrphanWork(ctx context.Context, endpointSliceObjects []runtime.Object, serviceExportKey keys.FederatedKey) error {
-	willReportWorks := sets.NewString()
-	for index := range endpointSliceObjects {
-		endpointSlice := endpointSliceObjects[index].(*unstructured.Unstructured)
-		workName := names.GenerateWorkName(endpointSlice.GetKind(), endpointSlice.GetName(), endpointSlice.GetNamespace())
-		willReportWorks.Insert(workName)
-	}
+// workListProvider defines a function type for listing works
+type workListProvider func(ctx context.Context, serviceExportKey keys.FederatedKey) (*workv1alpha1.WorkList, error)
 
+// collectedEpsWorkListProvider provides the default implementation for listing works
+func (c *ServiceExportController) collectedEpsWorkListProvider(ctx context.Context, serviceExportKey keys.FederatedKey) (*workv1alpha1.WorkList, error) {
 	collectedEpsWorkList := &workv1alpha1.WorkList{}
 	if err := c.List(ctx, collectedEpsWorkList, &client.ListOptions{
 		Namespace: names.GenerateExecutionSpaceName(serviceExportKey.Cluster),
@@ -445,8 +481,25 @@ func (c *ServiceExportController) removeOrphanWork(ctx context.Context, endpoint
 		}),
 		FieldSelector: fields.OneTermEqualSelector(indexregistry.WorkIndexByFieldSuspendDispatching, "true"),
 	}); err != nil {
-		klog.Errorf("Failed to list endpointslice work with serviceExport(%s/%s) under namespace %s: %v",
-			serviceExportKey.Namespace, serviceExportKey.Name, names.GenerateExecutionSpaceName(serviceExportKey.Cluster), err)
+		klog.ErrorS(err, "Failed to list workList reported by ServiceExport in executionSpace",
+			"namespace", serviceExportKey.Namespace, "name", serviceExportKey.Name, "executionSpace",
+			names.GenerateExecutionSpaceName(serviceExportKey.Cluster))
+		return nil, err
+	}
+	return collectedEpsWorkList, nil
+}
+
+// removeOrphanWork cleans up Work resources for EndpointSlices that no longer exist.
+func (c *ServiceExportController) removeOrphanWork(ctx context.Context, endpointSliceObjects []runtime.Object, serviceExportKey keys.FederatedKey) error {
+	willReportWorks := sets.NewString()
+	for index := range endpointSliceObjects {
+		endpointSlice := endpointSliceObjects[index].(*unstructured.Unstructured)
+		workName := names.GenerateWorkName(endpointSlice.GetKind(), endpointSlice.GetName(), endpointSlice.GetNamespace())
+		willReportWorks.Insert(workName)
+	}
+
+	collectedEpsWorkList, err := c.epsWorkListFunc(ctx, serviceExportKey)
+	if err != nil {
 		return err
 	}
 
@@ -475,12 +528,22 @@ func (c *ServiceExportController) removeOrphanWork(ctx context.Context, endpoint
 }
 
 // reportEndpointSliceWithEndpointSliceCreateOrUpdate reports the EndpointSlice when referencing service has been exported.
+// The informer for ServiceExport is created dynamically in Reconcile() when ServiceExport Works are detected.
+// If informer isn't synced yet, we return error to trigger retry.
 func (c *ServiceExportController) reportEndpointSliceWithEndpointSliceCreateOrUpdate(ctx context.Context, clusterName string, endpointSlice *unstructured.Unstructured) error {
 	relatedServiceName := endpointSlice.GetLabels()[discoveryv1.LabelServiceName]
 
 	singleClusterManager := c.InformerManager.GetSingleClusterManager(clusterName)
 	if singleClusterManager == nil {
 		return nil
+	}
+
+	// Before retrieving ServiceExport objects from the informer, ensure the informer cache is synced.
+	// This is necessary because the informer for ServiceExport is created dynamically in the Reconcile() routine
+	// when a Work resource containing an ServiceExport is detected for the cluster. If the informer is not yet synced,
+	// return an error and wait a retry at the next time.
+	if !singleClusterManager.IsInformerSynced(serviceExportGVR) {
+		return fmt.Errorf("the informer for cluster %s has not been synced, wait a retry at the next time", clusterName)
 	}
 
 	serviceExportLister := singleClusterManager.Lister(serviceExportGVR)
@@ -490,7 +553,7 @@ func (c *ServiceExportController) reportEndpointSliceWithEndpointSliceCreateOrUp
 			return nil
 		}
 
-		klog.Errorf("Failed to get ServiceExport object %s/%s. error: %v.", relatedServiceName, endpointSlice.GetNamespace(), err)
+		klog.ErrorS(err, "Failed to get ServiceExport object", "namespace", endpointSlice.GetNamespace(), "name", relatedServiceName)
 		return err
 	}
 
@@ -515,21 +578,25 @@ func reportEndpointSlice(ctx context.Context, c client.Client, endpointSlice *un
 	return nil
 }
 
-func getEndpointSliceWorkMeta(ctx context.Context, c client.Client, ns string, workName string, endpointSlice *unstructured.Unstructured) (metav1.ObjectMeta, error) {
+func getEndpointSliceWorkMeta(ctx context.Context, c client.Client, ns, workName string, endpointSlice *unstructured.Unstructured) (metav1.ObjectMeta, error) {
 	existWork := &workv1alpha1.Work{}
 	var err error
 	if err = c.Get(ctx, types.NamespacedName{
 		Namespace: ns,
 		Name:      workName,
 	}, existWork); err != nil && !apierrors.IsNotFound(err) {
-		klog.Errorf("Get EndpointSlice work(%s/%s) error:%v", ns, workName, err)
+		klog.ErrorS(err, "Failed to get EndpointSlice work", "namespace", ns, "name", workName)
 		return metav1.ObjectMeta{}, err
 	}
+
+	existFinalizers := existWork.GetFinalizers()
+	finalizersToAdd := []string{util.EndpointSliceControllerFinalizer}
+	newFinalizers := util.MergeFinalizers(existFinalizers, finalizersToAdd)
 
 	workMeta := metav1.ObjectMeta{
 		Name:       workName,
 		Namespace:  ns,
-		Finalizers: []string{util.EndpointSliceControllerFinalizer},
+		Finalizers: newFinalizers,
 		Labels: map[string]string{
 			util.ServiceNamespaceLabel:           endpointSlice.GetNamespace(),
 			util.ServiceNameLabel:                endpointSlice.GetLabels()[discoveryv1.LabelServiceName],
@@ -562,8 +629,8 @@ func cleanupWorkWithServiceExportDelete(ctx context.Context, c client.Client, se
 			util.ServiceNameLabel:      serviceExportKey.Name,
 		}),
 	}); err != nil {
-		klog.Errorf("Failed to list workList reported by ServiceExport(%s) in executionSpace(%s), Error: %v",
-			serviceExportKey.NamespaceKey(), executionSpace, err)
+		klog.ErrorS(err, "Failed to list workList reported by ServiceExport in executionSpace",
+			"namespace", serviceExportKey.Namespace, "name", serviceExportKey.Name, "executionSpace", executionSpace)
 		return err
 	}
 
@@ -589,7 +656,7 @@ func cleanupWorkWithEndpointSliceDelete(ctx context.Context, c client.Client, en
 			return nil
 		}
 
-		klog.Errorf("Failed to get work(%s) in executionSpace(%s), Error: %v", workNamespaceKey.String(), executionSpace, err)
+		klog.ErrorS(err, "Failed to get work in executionSpace", "work", workNamespaceKey.String(), "executionSpace", executionSpace)
 		return err
 	}
 
@@ -611,16 +678,18 @@ func cleanEndpointSliceWork(ctx context.Context, c client.Client, work *workv1al
 		work.Labels[util.EndpointSliceWorkManagedByLabel] = strings.Join(controllerSet.UnsortedList(), ".")
 
 		if err := c.Update(ctx, work); err != nil {
-			klog.Errorf("Failed to update work(%s/%s): %v", work.Namespace, work.Name, err)
+			klog.ErrorS(err, "Failed to update work", "namespace", work.Namespace, "workName", work.Name)
 			return err
 		}
+		klog.Infof("Successfully updated work(%s/%s)", work.Namespace, work.Name)
 		return nil
 	}
 
 	if err := c.Delete(ctx, work); err != nil {
-		klog.Errorf("Failed to delete work(%s/%s), Error: %v", work.Namespace, work.Name, err)
+		klog.ErrorS(err, "Failed to delete work", "namespace", work.Namespace, "workName", work.Name)
 		return err
 	}
+	klog.Infof("Successfully deleted work(%s/%s)", work.Namespace, work.Name)
 
 	return nil
 }

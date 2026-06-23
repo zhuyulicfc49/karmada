@@ -62,8 +62,8 @@ func TestController(t *testing.T) {
 		},
 	}
 
-	kubeFactory := informers.NewSharedInformerFactory(fake.NewSimpleClientset(), 0)
-	karmadaFactory := karmadainformers.NewSharedInformerFactory(karmadafake.NewSimpleClientset(cluster1, rr), 0)
+	kubeFactory := informers.NewSharedInformerFactory(fake.NewClientset(), 0)
+	karmadaFactory := karmadainformers.NewSharedInformerFactory(karmadafake.NewClientset(cluster1, rr), 0)
 
 	ctrl, err := NewController(NewControllerOption{
 		RestConfig:        restConfig,
@@ -82,8 +82,7 @@ func TestController(t *testing.T) {
 		return
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	kubeFactory.Start(ctx.Done())
 	karmadaFactory.Start(ctx.Done())
 	ctrl.Start(ctx)
@@ -343,7 +342,7 @@ func TestController_reconcile(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			actual := map[string]map[string]*store.MultiNamespace{}
-			karmadaClientset := karmadafake.NewSimpleClientset(tt.input...)
+			karmadaClientset := karmadafake.NewClientset(tt.input...)
 			karmadaFactory := karmadainformers.NewSharedInformerFactory(karmadaClientset, 0)
 
 			ctl := &Controller{
@@ -366,8 +365,7 @@ func TestController_reconcile(t *testing.T) {
 					},
 				},
 			}
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
+			ctx := t.Context()
 			karmadaFactory.Start(ctx.Done())
 			karmadaFactory.WaitForCacheSync(ctx.Done())
 
@@ -562,7 +560,7 @@ func TestController_Connect_Error(t *testing.T) {
 	wantBody := `{"kind":"Status","apiVersion":"get","metadata":{},"status":"Failure","message":"test","code":500}` + "\n"
 	gotBody := response.Body.String()
 	if wantBody != gotBody {
-		t.Errorf("got body: %v", diff.StringDiff(gotBody, wantBody))
+		t.Errorf("got body: %v", diff.Diff(gotBody, wantBody))
 	}
 }
 

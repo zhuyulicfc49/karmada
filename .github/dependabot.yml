@@ -6,31 +6,50 @@
 # Configuration options: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 version: 2
 updates:
-- package-ecosystem: "github-actions"
-  directory: "/"
-  schedule:
-    # Check for updates to GitHub Actions every week
-    interval: "weekly"
-    
-- package-ecosystem: docker
-  directory: /cluster/images/
-  schedule:
-    interval: weekly
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      # Check for updates every Monday at 00:00 UTC
+      interval: "weekly"
+      day: "monday"
+      time: "00:00"
+      timezone: "UTC"
 
-- package-ecosystem: docker
-  directory: /cluster/images/
-  target-branch: "release-1.14"
-  schedule:
-    interval: weekly
+  - package-ecosystem: docker
+    directory: /cluster/images/
+    schedule:
+      # Check for updates every Monday at 00:00 UTC
+      interval: "weekly"
+      day: "monday"
+      time: "00:00"
+      timezone: "UTC"
 
-- package-ecosystem: docker
-  directory: /cluster/images/
-  target-branch: "release-1.13"
-  schedule:
-    interval: weekly
+  - package-ecosystem: docker
+    directory: /cluster/images/
+    target-branch: "release-1.18"
+    schedule:
+      # Check for updates every Monday at 00:00 UTC
+      interval: "weekly"
+      day: "monday"
+      time: "00:00"
+      timezone: "UTC"
 
-- package-ecosystem: docker
-  directory: /cluster/images/
-  target-branch: "release-1.12"
-  schedule:
-    interval: weekly
+  - package-ecosystem: docker
+    directory: /cluster/images/
+    target-branch: "release-1.17"
+    schedule:
+      # Check for updates every Monday at 00:00 UTC
+      interval: "weekly"
+      day: "monday"
+      time: "00:00"
+      timezone: "UTC"
+
+  - package-ecosystem: docker
+    directory: /cluster/images/
+    target-branch: "release-1.16"
+    schedule:
+      # Check for updates every Monday at 00:00 UTC
+      interval: "weekly"
+      day: "monday"
+      time: "00:00"
+      timezone: "UTC"

@@ -71,7 +71,7 @@ spec:
         - --tls-min-version=VersionTLS13
         - --max-requests-inflight=1500
         - --max-mutating-requests-inflight=500
-        - --v=4
+        - --v=2
         livenessProbe:
           failureThreshold: 8
           httpGet:

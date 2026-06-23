@@ -15,13 +15,13 @@ package webhook
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	fakeclientset "k8s.io/client-go/kubernetes/fake"
 	coretesting "k8s.io/client-go/testing"
-	"k8s.io/utils/ptr"
 
 	operatorv1alpha1 "github.com/karmada-io/karmada/operator/pkg/apis/operator/v1alpha1"
 	"github.com/karmada-io/karmada/operator/pkg/util"
@@ -43,7 +43,7 @@ func TestEnsureKarmadaWebhook(t *testing.T) {
 				ImageRepository: image,
 				ImageTag:        imageTag,
 			},
-			Replicas:        ptr.To[int32](replicas),
+			Replicas:        new(replicas),
 			Annotations:     annotations,
 			Labels:          labels,
 			Resources:       corev1.ResourceRequirements{},
@@ -53,7 +53,7 @@ func TestEnsureKarmadaWebhook(t *testing.T) {
 	}
 
 	// Create fake clientset.
-	fakeClient := fakeclientset.NewSimpleClientset()
+	fakeClient := fakeclientset.NewClientset()
 
 	err := EnsureKarmadaWebhook(fakeClient, cfg, name, namespace, map[string]bool{})
 	if err != nil {
@@ -61,8 +61,35 @@ func TestEnsureKarmadaWebhook(t *testing.T) {
 	}
 
 	actions := fakeClient.Actions()
-	if len(actions) != 2 {
-		t.Fatalf("expected 2 actions, but got %d", len(actions))
+	// We now create deployment, service and PDB, so expect 3 actions
+	if len(actions) != 3 {
+		t.Fatalf("expected 3 actions, but got %d", len(actions))
+	}
+
+	// Check that we have deployment, service, and PDB
+	deploymentCount := 0
+	serviceCount := 0
+	pdbCount := 0
+	for _, action := range actions {
+		if action.GetResource().Resource == "deployments" {
+			deploymentCount++
+		} else if action.GetResource().Resource == "services" {
+			serviceCount++
+		} else if action.GetResource().Resource == "poddisruptionbudgets" {
+			pdbCount++
+		}
+	}
+
+	if deploymentCount != 1 {
+		t.Errorf("expected 1 deployment actions, but got %d", deploymentCount)
+	}
+
+	if serviceCount != 1 {
+		t.Errorf("expected 1 service action, but got %d", serviceCount)
+	}
+
+	if pdbCount != 1 {
+		t.Errorf("expected 1 PDB action, but got %d", pdbCount)
 	}
 }
 
@@ -83,7 +110,7 @@ func TestInstallKarmadaWebhook(t *testing.T) {
 				ImageRepository: image,
 				ImageTag:        imageTag,
 			},
-			Replicas:          ptr.To[int32](replicas),
+			Replicas:          new(replicas),
 			Annotations:       annotations,
 			Labels:            labels,
 			Resources:         corev1.ResourceRequirements{},
@@ -94,7 +121,7 @@ func TestInstallKarmadaWebhook(t *testing.T) {
 	}
 
 	// Create fake clientset.
-	fakeClient := fakeclientset.NewSimpleClientset()
+	fakeClient := fakeclientset.NewClientset()
 
 	featureGates := map[string]bool{"FeatureA": true}
 
@@ -103,9 +130,14 @@ func TestInstallKarmadaWebhook(t *testing.T) {
 		t.Fatalf("failed to install karmada webhook: %v", err)
 	}
 
-	err = verifyDeploymentCreation(fakeClient, replicas, imagePullPolicy, featureGates, extraArgs, name, namespace, image, imageTag, priorityClassName)
+	deployment, err := verifyDeploymentCreation(fakeClient)
 	if err != nil {
 		t.Fatalf("failed to verify karmada webhook deployment creation: %v", err)
+	}
+
+	// Verify deployment details
+	if err := verifyDeploymentDetails(deployment, replicas, imagePullPolicy, featureGates, extraArgs, name, namespace, image, imageTag, priorityClassName); err != nil {
+		t.Fatalf("failed to verify deployment details: %v", err)
 	}
 }
 
@@ -115,7 +147,7 @@ func TestCreateKarmadaWebhookService(t *testing.T) {
 	namespace := "test"
 
 	// Initialize fake clientset.
-	client := fakeclientset.NewSimpleClientset()
+	client := fakeclientset.NewClientset()
 
 	err := createKarmadaWebhookService(client, name, namespace)
 	if err != nil {
@@ -151,25 +183,32 @@ func TestCreateKarmadaWebhookService(t *testing.T) {
 }
 
 // verifyDeploymentCreation validates the details of a Deployment against the expected parameters.
-func verifyDeploymentCreation(client *fakeclientset.Clientset, replicas int32, imagePullPolicy corev1.PullPolicy, featureGates map[string]bool, extraArgs map[string]string, name, namespace, image, imageTag, priorityClassName string) error {
-	// Assert that a Deployment was created.
+func verifyDeploymentCreation(client *fakeclientset.Clientset) (*appsv1.Deployment, error) {
+	// Assert that a Deployment and PDB were created.
 	actions := client.Actions()
-	if len(actions) != 1 {
-		return fmt.Errorf("expected exactly 1 action either create or update, but got %d actions", len(actions))
+	// We now create deployment and PDB, so expect 2 actions
+	if len(actions) != 2 {
+		return nil, fmt.Errorf("expected exactly 2 actions (deployment + PDB), but got %d actions", len(actions))
 	}
 
-	// Check that the action was a Deployment creation.
-	createAction, ok := actions[0].(coretesting.CreateAction)
-	if !ok {
-		return fmt.Errorf("expected a CreateAction, but got %T", actions[0])
+	// Find the deployment action
+	var deployment *appsv1.Deployment
+	for _, action := range actions {
+		if action.GetResource().Resource == "deployments" {
+			createAction, ok := action.(coretesting.CreateAction)
+			if !ok {
+				return nil, fmt.Errorf("expected a CreateAction for deployment, but got %T", action)
+			}
+			deployment = createAction.GetObject().(*appsv1.Deployment)
+			break
+		}
 	}
 
-	if createAction.GetResource().Resource != "deployments" {
-		return fmt.Errorf("expected action on 'deployments', but got '%s'", createAction.GetResource().Resource)
+	if deployment == nil {
+		return nil, fmt.Errorf("expected deployment action, but none found")
 	}
 
-	deployment := createAction.GetObject().(*appsv1.Deployment)
-	return verifyDeploymentDetails(deployment, replicas, imagePullPolicy, featureGates, extraArgs, name, namespace, image, imageTag, priorityClassName)
+	return deployment, nil
 }
 
 // verifyDeploymentDetails validates the details of a Deployment against the expected parameters.
@@ -275,10 +314,5 @@ func verifyFeatureGates(container *corev1.Container, featureGates map[string]boo
 
 // contains check if a slice contains a specific string.
 func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(slice, item)
 }

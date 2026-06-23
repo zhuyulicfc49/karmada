@@ -79,7 +79,42 @@ var (
 		%[1]s init --cert-external-ip 10.235.1.2 --cert-external-dns www.karmada.io
 
 		# Install Karmada using a configuration file
-		%[1]s init --config /path/to/your/config/file.yaml`)
+		%[1]s init --config /path/to/your/config/file.yaml
+		
+		# Pass extra arguments to Local Etcd. (Parameters are separated by commas)
+		%[1]s init --etcd-extra-args="--snapshot-count=5000,--heartbeat-interval=100"
+		# Or write them separately.
+		%[1]s init --etcd-extra-args="--snapshot-count=5000" --etcd-extra-args="--heartbeat-interval=100"
+
+		# Pass extra arguments to Karmada API Server. (Parameters are separated by commas)
+		%[1]s init --karmada-apiserver-extra-args="--tls-min-version=VersionTLS12,--audit-log-path=-"
+		# Or write them separately.
+		%[1]s init --karmada-apiserver-extra-args="--tls-min-version=VersionTLS12" --karmada-apiserver-extra-args="--audit-log-path=-"
+
+		# Pass extra arguments to Karmada Scheduler. (Parameters are separated by commas)
+		%[1]s init --karmada-scheduler-extra-args="--scheduler-name=test-scheduler,--enable-pprof"
+		# Or write them separately.
+		%[1]s init --karmada-scheduler-extra-args="--scheduler-name=test-scheduler" --karmada-scheduler-extra-args="--enable-pprof"
+
+		# Pass extra arguments to Kube Controller Manager. (Parameters are separated by commas)
+		%[1]s init --kube-controller-manager-extra-args="--node-monitor-grace-period=50s,--node-monitor-period=5s"
+		# Or write them separately.
+		%[1]s init --kube-controller-manager-extra-args="--node-monitor-grace-period=50s" --kube-controller-manager-extra-args="--node-monitor-period=5s"
+		
+		# Pass extra arguments to Karmada Controller Manager. (Parameters are separated by commas)
+		%[1]s init --karmada-controller-manager-extra-args="--v=2,--enable-pprof"
+		# Or write them separately.
+		%[1]s init --karmada-controller-manager-extra-args="--v=2" --karmada-controller-manager-extra-args="--enable-pprof"
+
+		# Pass extra arguments to Karmada Webhook. (Parameters are separated by commas)
+		%[1]s init --karmada-webhook-extra-args="--v=2,--enable-pprof"
+		# Or write them separately.
+		%[1]s init --karmada-webhook-extra-args="--v=2" --karmada-webhook-extra-args="--enable-pprof"
+
+		# Pass extra arguments to Karmada Aggregated API Server. (Parameters are separated by commas)
+		%[1]s init --karmada-aggregated-apiserver-extra-args="--v=2,--enable-pprof"
+		# Or write them separately.
+		%[1]s init --karmada-aggregated-apiserver-extra-args="--v=2" --karmada-aggregated-apiserver-extra-args="--enable-pprof"`)
 )
 
 // NewCmdInit install Karmada on Kubernetes
@@ -123,7 +158,7 @@ func NewCmdInit(parentCommand string) *cobra.Command {
 	// kube image registry
 	flags.StringVarP(&opts.KubeImageMirrorCountry, "kube-image-mirror-country", "", "", "Country code of the kube image registry to be used. For Chinese mainland users, set it to cn")
 	flags.StringVarP(&opts.KubeImageRegistry, "kube-image-registry", "", "", "Kube image registry. For Chinese mainland users, you may use local gcr.io mirrors such as registry.cn-hangzhou.aliyuncs.com/google_containers to override default kube image registry")
-	flags.StringVar(&opts.KubeImageTag, "kube-image-tag", "v1.31.3", "Choose a specific Kubernetes version for the control plane.")
+	flags.StringVar(&opts.KubeImageTag, "kube-image-tag", "v1.35.2", "Choose a specific Kubernetes version for the control plane.")
 	// cert
 	flags.StringVar(&opts.ExternalIP, "cert-external-ip", "", "the external IP of Karmada certificate (e.g 192.168.1.2,172.16.1.2)")
 	flags.StringVar(&opts.ExternalDNS, "cert-external-dns", "", "the external DNS of Karmada certificate (e.g localhost,localhost.com)")
@@ -140,7 +175,6 @@ func NewCmdInit(parentCommand string) *cobra.Command {
 	flags.StringVarP(&opts.EtcdStorageMode, "etcd-storage-mode", "", "hostPath",
 		fmt.Sprintf("etcd data storage mode(%s). value is PVC, specify --storage-classes-name", strings.Join(kubernetes.SupportedStorageMode(), ",")))
 	flags.StringVarP(&opts.EtcdImage, "etcd-image", "", "", "etcd image")
-	flags.StringVarP(&opts.EtcdInitImage, "etcd-init-image", "", kubernetes.DefaultInitImage, "etcd init container image")
 	flags.Int32VarP(&opts.EtcdReplicas, "etcd-replicas", "", 1, "etcd replica set, cluster 3,5...singular")
 	flags.StringVarP(&opts.EtcdHostDataPath, "etcd-data", "", "/var/lib/karmada-etcd", "etcd data path,valid in hostPath mode.")
 	flags.StringVarP(&opts.EtcdNodeSelectorLabels, "etcd-node-selector-labels", "", "", "the labels used for etcd pod to select nodes, valid in hostPath mode, and with each label separated by a comma. ( e.g. --etcd-node-selector-labels karmada.io/etcd=true,kubernetes.io/os=linux)")
@@ -151,6 +185,7 @@ func NewCmdInit(parentCommand string) *cobra.Command {
 	flags.StringVar(&opts.ExternalEtcdServers, "external-etcd-servers", "", "The server urls of external etcd cluster, to be used by kube-apiserver through --etcd-servers.")
 	flags.StringVar(&opts.ExternalEtcdKeyPrefix, "external-etcd-key-prefix", "", "The key prefix to be configured to kube-apiserver through --etcd-prefix.")
 	flags.StringVar(&opts.EtcdPriorityClass, "etcd-priority-class", "system-node-critical", "The priority class name for the component etcd.")
+	flags.StringSliceVar(&opts.EtcdExtraArgs, "etcd-extra-args", nil, "Additional command line arguments to pass to the etcd component. Can be specified multiple times or as comma-separated values (e.g., '--snapshot-count=5000,--heartbeat-interval=100')")
 	// karmada
 	flags.StringVar(&opts.CRDs, "crds", kubernetes.DefaultCrdURL, "Karmada crds resource.(local file e.g. --crds /root/crds.tar.gz)")
 	flags.StringVar(&opts.KarmadaInitFilePath, "config", "", "Karmada init file path")
@@ -163,26 +198,32 @@ func NewCmdInit(parentCommand string) *cobra.Command {
 	flags.StringVarP(&opts.KarmadaAPIServerImage, "karmada-apiserver-image", "", "", "Kubernetes apiserver image")
 	flags.Int32VarP(&opts.KarmadaAPIServerReplicas, "karmada-apiserver-replicas", "", 1, "Karmada apiserver replica set")
 	flags.StringVar(&opts.KarmadaAPIServerPriorityClass, "karmada-apiserver-priority-class", "system-node-critical", "The priority class name for the component karmada-apiserver.")
+	flags.StringSliceVar(&opts.KarmadaAPIServerExtraArgs, "karmada-apiserver-extra-args", nil, "Additional command line arguments to pass to the karmada-apiserver component. Can be specified multiple times or as comma-separated values (e.g., '--tls-min-version=VersionTLS12,--audit-log-path=-')")
 	// karmada-scheduler
 	flags.StringVarP(&opts.KarmadaSchedulerImage, "karmada-scheduler-image", "", kubernetes.DefaultKarmadaSchedulerImage, "Karmada scheduler image")
 	flags.Int32VarP(&opts.KarmadaSchedulerReplicas, "karmada-scheduler-replicas", "", 1, "Karmada scheduler replica set")
 	flags.StringVar(&opts.KarmadaSchedulerPriorityClass, "karmada-scheduler-priority-class", "system-node-critical", "The priority class name for the component karmada-scheduler.")
+	flags.StringSliceVar(&opts.KarmadaSchedulerExtraArgs, "karmada-scheduler-extra-args", nil, "Additional command line arguments to pass to the karmada-scheduler component. Can be specified multiple times or as comma-separated values (e.g., '--scheduler-name=test-scheduler,--enable-pprof')")
 	// karmada-kube-controller-manager
 	flags.StringVarP(&opts.KubeControllerManagerImage, "karmada-kube-controller-manager-image", "", "", "Kubernetes controller manager image")
 	flags.Int32VarP(&opts.KubeControllerManagerReplicas, "karmada-kube-controller-manager-replicas", "", 1, "Karmada kube controller manager replica set")
 	flags.StringVar(&opts.KubeControllerManagerPriorityClass, "karmada-kube-controller-manager-priority-class", "system-node-critical", "The priority class name for the component karmada-kube-controller-manager.")
+	flags.StringSliceVar(&opts.KubeControllerManagerExtraArgs, "karmada-kube-controller-manager-extra-args", nil, "Additional command line arguments to pass to the karmada-kube-controller-manager component. Can be specified multiple times or as comma-separated values (e.g., '--node-monitor-grace-period=50s,--node-monitor-period=5s')")
 	// karamda-controller-manager
 	flags.StringVarP(&opts.KarmadaControllerManagerImage, "karmada-controller-manager-image", "", kubernetes.DefaultKarmadaControllerManagerImage, "Karmada controller manager image")
 	flags.Int32VarP(&opts.KarmadaControllerManagerReplicas, "karmada-controller-manager-replicas", "", 1, "Karmada controller manager replica set")
 	flags.StringVar(&opts.KarmadaControllerManagerPriorityClass, "karmada-controller-manager-priority-class", "system-node-critical", "The priority class name for the component karmada-controller-manager.")
+	flags.StringSliceVar(&opts.KarmadaControllerManagerExtraArgs, "karmada-controller-manager-extra-args", nil, "Additional command line arguments to pass to the karmada-controller-manager component. Can be specified multiple times or as comma-separated values (e.g., '--v=2,--enable-pprof')")
 	// karmada-webhook
 	flags.StringVarP(&opts.KarmadaWebhookImage, "karmada-webhook-image", "", kubernetes.DefaultKarmadaWebhookImage, "Karmada webhook image")
 	flags.Int32VarP(&opts.KarmadaWebhookReplicas, "karmada-webhook-replicas", "", 1, "Karmada webhook replica set")
 	flags.StringVar(&opts.KarmadaWebhookPriorityClass, "karmada-webhook-priority-class", "system-node-critical", "The priority class name for the component karmada-webhook.")
+	flags.StringSliceVar(&opts.KarmadaWebhookExtraArgs, "karmada-webhook-extra-args", nil, "Additional command line arguments to pass to the karmada-webhook component. Can be specified multiple times or as comma-separated values (e.g., '--v=2,--enable-pprof')")
 	// karmada-aggregated-apiserver
 	flags.StringVarP(&opts.KarmadaAggregatedAPIServerImage, "karmada-aggregated-apiserver-image", "", kubernetes.DefaultKarmadaAggregatedAPIServerImage, "Karmada aggregated apiserver image")
 	flags.Int32VarP(&opts.KarmadaAggregatedAPIServerReplicas, "karmada-aggregated-apiserver-replicas", "", 1, "Karmada aggregated apiserver replica set")
 	flags.StringVar(&opts.KarmadaAggregatedAPIServerPriorityClass, "karmada-aggregated-apiserver-priority-class", "system-node-critical", "The priority class name for the component karmada-aggregated-apiserver.")
+	flags.StringSliceVar(&opts.KarmadaAggregatedAPIServerExtraArgs, "karmada-aggregated-apiserver-extra-args", nil, "Additional command line arguments to pass to the karmada-aggregated-apiserver component. Can be specified multiple times or as comma-separated values (e.g., '--v=2,--enable-pprof')")
 
 	return cmd
 }

@@ -19,17 +19,14 @@ package server
 import (
 	"context"
 	"fmt"
-	"sync/atomic"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
 	utiltrace "k8s.io/utils/trace"
 
 	"github.com/karmada-io/karmada/pkg/estimator/pb"
-	nodeutil "github.com/karmada-io/karmada/pkg/estimator/server/nodes"
-	"github.com/karmada-io/karmada/pkg/util"
+	"github.com/karmada-io/karmada/pkg/estimator/server/framework"
+	"github.com/karmada-io/karmada/pkg/features"
 	schedcache "github.com/karmada-io/karmada/pkg/util/lifted/scheduler/cache"
-	"github.com/karmada-io/karmada/pkg/util/lifted/scheduler/framework"
 )
 
 // EstimateReplicas returns max available replicas in terms of request and cluster status.
@@ -47,7 +44,14 @@ func (es *AccurateSchedulerEstimatorServer) EstimateReplicas(ctx context.Context
 		return 0, nil
 	}
 
-	maxAvailableReplicas, err := es.estimateReplicas(ctx, snapShot, request.ReplicaRequirements)
+	estCtx := framework.ReplicaEstimationContext{
+		Snapshot:            snapShot,
+		ReplicaRequirements: request.GetReplicaRequirements(),
+	}
+	if features.FeatureGate.Enabled(features.SchedulingOvercommitProtection) {
+		estCtx.AssumedWorkloads = request.GetAssumedWorkloads()
+	}
+	maxAvailableReplicas, err := es.estimateReplicas(ctx, estCtx)
 	if err != nil {
 		return 0, err
 	}
@@ -56,26 +60,55 @@ func (es *AccurateSchedulerEstimatorServer) EstimateReplicas(ctx context.Context
 	return maxAvailableReplicas, nil
 }
 
-func (es *AccurateSchedulerEstimatorServer) estimateReplicas(
-	ctx context.Context,
-	snapshot *schedcache.Snapshot,
-	requirements pb.ReplicaRequirements,
-) (int32, error) {
-	allNodes, err := snapshot.NodeInfos().List()
+func (es *AccurateSchedulerEstimatorServer) estimateReplicas(ctx context.Context, estCtx framework.ReplicaEstimationContext) (int32, error) {
+	replicas, ret := es.estimateFramework.RunEstimateReplicasPlugins(ctx, estCtx)
+
+	// No replicas can be scheduled on the cluster, skip further checks and return 0
+	if ret.IsUnschedulable() {
+		return 0, nil
+	}
+
+	if ret.IsFailed() {
+		return 0, fmt.Errorf("estimate replica plugins fails with %s", ret.Reasons())
+	}
+
+	return replicas, nil
+}
+
+// EstimateComponents returns max available component sets in terms of request and cluster status.
+func (es *AccurateSchedulerEstimatorServer) EstimateComponents(ctx context.Context, object string, request *pb.MaxAvailableComponentSetsRequest) (int32, error) {
+	trace := utiltrace.New("Estimating", utiltrace.Field{Key: "namespacedName", Value: object})
+	defer trace.LogIfLong(100 * time.Millisecond)
+
+	snapShot := schedcache.NewEmptySnapshot()
+	if err := es.Cache.UpdateSnapshot(snapShot); err != nil {
+		return 0, err
+	}
+	trace.Step("Snapshotting estimator cache and node infos done")
+
+	if snapShot.NumNodes() == 0 {
+		return 0, nil
+	}
+
+	estCtx := framework.ComponentEstimationContext{
+		Snapshot:   snapShot,
+		Components: request.Components,
+		Namespace:  request.Namespace,
+	}
+	if features.FeatureGate.Enabled(features.SchedulingOvercommitProtection) {
+		estCtx.AssumedWorkloads = request.GetAssumedWorkloads()
+	}
+	maxAvailableComponentSets, err := es.estimateComponents(ctx, estCtx)
 	if err != nil {
 		return 0, err
 	}
-	var (
-		affinity    = nodeutil.GetRequiredNodeAffinity(requirements)
-		tolerations []corev1.Toleration
-	)
+	trace.Step("Computing estimation done")
 
-	if requirements.NodeClaim != nil {
-		tolerations = requirements.NodeClaim.Tolerations
-	}
+	return maxAvailableComponentSets, nil
+}
 
-	var res int32
-	replicas, ret := es.estimateFramework.RunEstimateReplicasPlugins(ctx, snapshot, &requirements)
+func (es *AccurateSchedulerEstimatorServer) estimateComponents(ctx context.Context, estCtx framework.ComponentEstimationContext) (int32, error) {
+	maxSets, ret := es.estimateFramework.RunEstimateComponentsPlugins(ctx, estCtx)
 
 	// No replicas can be scheduled on the cluster, skip further checks and return 0
 	if ret.IsUnschedulable() {
@@ -83,30 +116,12 @@ func (es *AccurateSchedulerEstimatorServer) estimateReplicas(
 	}
 
 	if !ret.IsSuccess() && !ret.IsNoOperation() {
-		return replicas, fmt.Errorf("estimate replica plugins fails with %s", ret.Reasons())
+		return maxSets, fmt.Errorf("estimate components plugins fails with %s", ret.Reasons())
 	}
-	processNode := func(i int) {
-		node := allNodes[i]
-		if !nodeutil.IsNodeAffinityMatched(node.Node(), affinity) || !nodeutil.IsTolerationMatched(node.Node(), tolerations) {
-			return
-		}
-		maxReplica := es.nodeMaxAvailableReplica(node, requirements.ResourceRequest)
-		atomic.AddInt32(&res, maxReplica)
-	}
-	es.parallelizer.Until(ctx, len(allNodes), processNode)
 
-	if ret.IsSuccess() && replicas < res {
-		res = replicas
+	// If no plugins were run (NoOperation), return maxSets value to prevent scheduling failure
+	if ret.IsSuccess() || ret.IsNoOperation() {
+		return maxSets, nil
 	}
-	return res, nil
-}
-
-func (es *AccurateSchedulerEstimatorServer) nodeMaxAvailableReplica(node *framework.NodeInfo, rl corev1.ResourceList) int32 {
-	rest := node.Allocatable.Clone().SubResource(node.Requested)
-	// The number of pods in a node is a kind of resource in node allocatable resources.
-	// However, total requested resources of all pods on this node, i.e. `node.Requested`,
-	// do not contain pod resources. So after subtraction, we should cope with allowed pod
-	// number manually which is the upper bound of this node available replicas.
-	rest.AllowedPodNumber = util.MaxInt64(rest.AllowedPodNumber-int64(len(node.Pods)), 0)
-	return int32(rest.MaxDivided(rl)) // #nosec G115: integer overflow conversion int64 -> int32
+	return 0, nil
 }

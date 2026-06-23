@@ -19,6 +19,7 @@ package descheduler
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -199,36 +200,45 @@ func (d *Descheduler) worker(key util.QueueKey) error {
 	}
 
 	h.FillUnschedulableReplicas(d.unschedulableThreshold)
-	klog.V(3).Infof("Unschedulable result of resource(%s): %v", namespacedName, h.TargetClusters)
+	klog.V(3).Infof("Unschedulable result of resource(%s): %v", namespacedName, h.TargetClusterReplicaStatus)
 
 	return d.updateScheduleResult(h)
 }
 
+// updateScheduleResult adjusts per-cluster replica targets based on unschedulable estimates
+// and updates the corresponding ResourceBinding. It also records an event summarizing
+// how many replicas were descheduled per cluster and in total.
 func (d *Descheduler) updateScheduleResult(h *core.SchedulingResultHelper) error {
 	unschedulableSum := int32(0)
-	message := descheduleSuccessMessage
+	var message strings.Builder
+	message.WriteString(descheduleSuccessMessage)
 	binding := h.ResourceBinding.DeepCopy()
-	for i, cluster := range h.TargetClusters {
+	for i, cluster := range h.TargetClusterReplicaStatus {
+		// Only act when estimator reports some unschedulable replicas and the
+		// desired replicas (Spec) can cover that reduction.
 		if cluster.Unschedulable > 0 && cluster.Spec >= cluster.Unschedulable {
 			target := cluster.Spec - cluster.Unschedulable
-			// The target cluster replicas must not be less than ready replicas.
+			// Ensure we never reduce below the currently ready replicas (safety cap),
+			// but only if ready <= desired Spec to avoid increasing above Spec.
 			if target < cluster.Ready && cluster.Ready <= cluster.Spec {
 				target = cluster.Ready
 			}
 			binding.Spec.Clusters[i].Replicas = target
 			unschedulable := cluster.Spec - target
 			unschedulableSum += unschedulable
-			message += fmt.Sprintf(", %d replica(s) in cluster(%s)", unschedulable, cluster.ClusterName)
+			fmt.Fprintf(&message, ", %d replica(s) in cluster(%s)", unschedulable, cluster.ClusterName)
 		}
 	}
 	if unschedulableSum == 0 {
+		// Nothing changed; skip API update and event recording logic.
 		return nil
 	}
-	message += fmt.Sprintf(", %d total descheduled replica(s)", unschedulableSum)
+	fmt.Fprintf(&message, ", %d total descheduled replica(s)", unschedulableSum)
 
 	var err error
 	defer func() {
-		d.recordDescheduleResultEventForResourceBinding(binding, message, err)
+		// Always record an event for observability, including failure reasons if any.
+		d.recordDescheduleResultEventForResourceBinding(binding, message.String(), err)
 	}()
 
 	binding, err = d.KarmadaClient.WorkV1alpha2().ResourceBindings(binding.Namespace).Update(context.TODO(), binding, metav1.UpdateOptions{})
@@ -239,7 +249,7 @@ func (d *Descheduler) updateScheduleResult(h *core.SchedulingResultHelper) error
 	return nil
 }
 
-func (d *Descheduler) addCluster(obj interface{}) {
+func (d *Descheduler) addCluster(obj any) {
 	cluster, ok := obj.(*clusterv1alpha1.Cluster)
 	if !ok {
 		klog.Errorf("Cannot convert to Cluster: %v", obj)
@@ -249,7 +259,7 @@ func (d *Descheduler) addCluster(obj interface{}) {
 	d.schedulerEstimatorWorker.Add(cluster.Name)
 }
 
-func (d *Descheduler) updateCluster(_, newObj interface{}) {
+func (d *Descheduler) updateCluster(_, newObj any) {
 	cluster, ok := newObj.(*clusterv1alpha1.Cluster)
 	if !ok {
 		klog.Errorf("Cannot convert to Cluster: %v", newObj)
@@ -259,7 +269,7 @@ func (d *Descheduler) updateCluster(_, newObj interface{}) {
 	d.schedulerEstimatorWorker.Add(cluster.Name)
 }
 
-func (d *Descheduler) deleteCluster(obj interface{}) {
+func (d *Descheduler) deleteCluster(obj any) {
 	var cluster *clusterv1alpha1.Cluster
 	switch t := obj.(type) {
 	case *clusterv1alpha1.Cluster:

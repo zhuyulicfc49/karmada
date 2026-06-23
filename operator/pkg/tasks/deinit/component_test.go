@@ -109,7 +109,7 @@ func TestRunRemoveComponentSubTask(t *testing.T) {
 
 				// Create Karmada Controller Manager deployment with given labels.
 				d.Labels = constants.KarmadaOperatorLabel
-				if err := apiclient.CreateOrUpdateDeployment(client, d); err != nil {
+				if _, err := apiclient.CreateOrUpdateDeployment(client, d); err != nil {
 					return fmt.Errorf("failed to create deployment, got: %v", err)
 				}
 
@@ -142,7 +142,7 @@ func TestRunRemoveComponentSubTask(t *testing.T) {
 			runData: &TestDeInitData{
 				name:         name,
 				namespace:    namespace,
-				remoteClient: fakeclientset.NewSimpleClientset(),
+				remoteClient: fakeclientset.NewClientset(),
 			},
 			hasService: true,
 			wantErr:    false,
@@ -201,7 +201,7 @@ func TestRunRemoveEtcd(t *testing.T) {
 
 				// Create Etcd statefulset with given labels.
 				staetfulset.Labels = constants.KarmadaOperatorLabel
-				if err := apiclient.CreateOrUpdateStatefulSet(client, staetfulset); err != nil {
+				if _, err := apiclient.CreateOrUpdateStatefulSet(client, staetfulset); err != nil {
 					return fmt.Errorf("failed to create statefulset, got: %v", err)
 				}
 
@@ -234,7 +234,7 @@ func TestRunRemoveEtcd(t *testing.T) {
 			runData: &TestDeInitData{
 				name:         name,
 				namespace:    namespace,
-				remoteClient: fakeclientset.NewSimpleClientset(),
+				remoteClient: fakeclientset.NewClientset(),
 			},
 			wantErr: false,
 		},

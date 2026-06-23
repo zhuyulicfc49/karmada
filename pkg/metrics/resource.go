@@ -73,18 +73,18 @@ var (
 
 	createResourceWhenSyncWork = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: createResourceToCluster,
-		Help: "Number of creation operations against a target member cluster. The 'result' label indicates outcome ('success' or 'error'), 'recreate' indicates whether the operation is recreated (true/false). Labels 'apiversion', 'kind', and 'cluster' specify the resource type, API version, and target cluster respectively.",
-	}, []string{"result", "apiversion", "kind", "cluster", "recreate"})
+		Help: "Number of creation operations against a target member cluster. The 'result' label indicates outcome ('success' or 'error'), 'recreate' indicates whether the operation is recreated (true/false). Labels 'apiversion', 'kind', and 'member_cluster' specify the resource type, API version, and target cluster respectively.",
+	}, []string{"result", "apiversion", "kind", memberClusterLabel, "recreate"})
 
 	updateResourceWhenSyncWork = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: updateResourceToCluster,
-		Help: "Number of updating operation of the resource to a target member cluster. By the result, 'error' means a resource updated failed. Otherwise 'success'. Cluster means the target member cluster. operationResult means the result of the update operation.",
-	}, []string{"result", "apiversion", "kind", "cluster", "operationResult"})
+		Help: "Number of updating operation of the resource to a target member cluster. By the result, 'error' means a resource updated failed. Otherwise 'success'. member_cluster means the target member cluster. operationResult means the result of the update operation.",
+	}, []string{"result", "apiversion", "kind", memberClusterLabel, "operationResult"})
 
 	deleteResourceWhenSyncWork = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: deleteResourceFromCluster,
-		Help: "Number of deletion operations against a target member cluster. The 'result' label indicates outcome ('success' or 'error'). Labels 'apiversion', 'kind', and 'cluster' specify the resource's API version, type, and source cluster respectively.",
-	}, []string{"result", "apiversion", "kind", "cluster"})
+		Help: "Number of deletion operations against a target member cluster. The 'result' label indicates outcome ('success' or 'error'). Labels 'apiversion', 'kind', and 'member_cluster' specify the resource's API version, type, and source cluster respectively.",
+	}, []string{"result", "apiversion", "kind", memberClusterLabel})
 
 	policyPreemptionCounter = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: policyPreemptionMetricsName,
@@ -139,17 +139,34 @@ func ObserveSyncWorkloadLatency(err error, start time.Time) {
 
 // CountCreateResourceToCluster records the number of creation operations of the resource for a target member cluster.
 func CountCreateResourceToCluster(err error, apiVersion, kind, cluster string, recreate bool) {
-	createResourceWhenSyncWork.WithLabelValues(utilmetrics.GetResultByError(err), apiVersion, kind, cluster, strconv.FormatBool(recreate)).Inc()
+	createResourceWhenSyncWork.WithLabelValues(
+		utilmetrics.GetResultByError(err),
+		apiVersion,
+		kind,
+		cluster,
+		strconv.FormatBool(recreate),
+	).Inc()
 }
 
 // CountUpdateResourceToCluster records the number of updating operation of the resource to a target member cluster.
 func CountUpdateResourceToCluster(err error, apiVersion, kind, cluster string, operationResult string) {
-	updateResourceWhenSyncWork.WithLabelValues(utilmetrics.GetResultByError(err), apiVersion, kind, cluster, operationResult).Inc()
+	updateResourceWhenSyncWork.WithLabelValues(
+		utilmetrics.GetResultByError(err),
+		apiVersion,
+		kind,
+		cluster,
+		operationResult,
+	).Inc()
 }
 
 // CountDeleteResourceFromCluster records the number of deletion operations of the resource from a target member cluster.
 func CountDeleteResourceFromCluster(err error, apiVersion, kind, cluster string) {
-	deleteResourceWhenSyncWork.WithLabelValues(utilmetrics.GetResultByError(err), apiVersion, kind, cluster).Inc()
+	deleteResourceWhenSyncWork.WithLabelValues(
+		utilmetrics.GetResultByError(err),
+		apiVersion,
+		kind,
+		cluster,
+	).Inc()
 }
 
 // CountPolicyPreemption records the numbers of policy preemption.

@@ -56,6 +56,8 @@ func (p *ConfigurableInterpreter) HookEnabled(kind schema.GroupVersionKind, oper
 		script = customAccessor.GetHealthInterpretationLuaScript()
 	case configv1alpha1.InterpreterOperationInterpretReplica:
 		script = customAccessor.GetReplicaResourceLuaScript()
+	case configv1alpha1.InterpreterOperationInterpretComponent:
+		script = customAccessor.GetComponentResourceLuaScript()
 	case configv1alpha1.InterpreterOperationInterpretStatus:
 		script = customAccessor.GetStatusReflectionLuaScript()
 	case configv1alpha1.InterpreterOperationRetain:
@@ -68,13 +70,13 @@ func (p *ConfigurableInterpreter) HookEnabled(kind schema.GroupVersionKind, oper
 
 // GetReplicas returns the desired replicas of the object as well as the requirements of each replica.
 func (p *ConfigurableInterpreter) GetReplicas(object *unstructured.Unstructured) (replicas int32, requires *workv1alpha2.ReplicaRequirements, enabled bool, err error) {
-	klog.V(4).Infof("Get replicas for object: %v %s/%s with thirdparty configurable interpreter.", object.GroupVersionKind(), object.GetNamespace(), object.GetName())
-
 	customAccessor, enabled := p.getCustomAccessor(object.GroupVersionKind())
 	if !enabled {
 		return
 	}
 
+	klog.V(4).Infof("Running operation %s for object: %v %s/%s with thirdparty configurable interpreter.",
+		configv1alpha1.InterpreterOperationInterpretReplica, object.GroupVersionKind(), object.GetNamespace(), object.GetName())
 	script := customAccessor.GetReplicaResourceLuaScript()
 	if len(script) == 0 {
 		enabled = false
@@ -85,10 +87,27 @@ func (p *ConfigurableInterpreter) GetReplicas(object *unstructured.Unstructured)
 	return
 }
 
+// GetComponents returns the desired components of the object.
+func (p *ConfigurableInterpreter) GetComponents(object *unstructured.Unstructured) (components []workv1alpha2.Component, enabled bool, err error) {
+	customAccessor, enabled := p.getCustomAccessor(object.GroupVersionKind())
+	if !enabled {
+		return
+	}
+
+	script := customAccessor.GetComponentResourceLuaScript()
+	if len(script) == 0 {
+		enabled = false
+		return
+	}
+
+	klog.V(4).Infof("Running operation %s for object: %v %s/%s with thirdparty configurable interpreter.",
+		configv1alpha1.InterpreterOperationInterpretComponent, object.GroupVersionKind(), object.GetNamespace(), object.GetName())
+	components, err = p.luaVM.GetComponents(object, script)
+	return
+}
+
 // ReviseReplica revises the replica of the given object.
 func (p *ConfigurableInterpreter) ReviseReplica(object *unstructured.Unstructured, replica int64) (revised *unstructured.Unstructured, enabled bool, err error) {
-	klog.V(4).Infof("Revise replicas for object: %v %s/%s with thirdparty configurable interpreter.", object.GroupVersionKind(), object.GetNamespace(), object.GetName())
-
 	customAccessor, enabled := p.getCustomAccessor(object.GroupVersionKind())
 	if !enabled {
 		return
@@ -100,14 +119,14 @@ func (p *ConfigurableInterpreter) ReviseReplica(object *unstructured.Unstructure
 		return
 	}
 
+	klog.V(4).Infof("Running operation %s for object: %v %s/%s with thirdparty configurable interpreter.",
+		configv1alpha1.InterpreterOperationReviseReplica, object.GroupVersionKind(), object.GetNamespace(), object.GetName())
 	revised, err = p.luaVM.ReviseReplica(object, replica, script)
 	return
 }
 
 // Retain returns the objects that based on the "desired" object but with values retained from the "observed" object.
 func (p *ConfigurableInterpreter) Retain(desired *unstructured.Unstructured, observed *unstructured.Unstructured) (retained *unstructured.Unstructured, enabled bool, err error) {
-	klog.V(4).Infof("Retain object: %v %s/%s with thirdparty configurable interpreter.", desired.GroupVersionKind(), desired.GetNamespace(), desired.GetName())
-
 	customAccessor, enabled := p.getCustomAccessor(desired.GroupVersionKind())
 	if !enabled {
 		return
@@ -119,13 +138,14 @@ func (p *ConfigurableInterpreter) Retain(desired *unstructured.Unstructured, obs
 		return
 	}
 
+	klog.V(4).Infof("Running operation %s for object: %v %s/%s with thirdparty configurable interpreter.",
+		configv1alpha1.InterpreterOperationRetain, desired.GroupVersionKind(), desired.GetNamespace(), desired.GetName())
 	retained, err = p.luaVM.Retain(desired, observed, script)
 	return
 }
 
 // AggregateStatus returns the objects that based on the 'object' but with status aggregated.
 func (p *ConfigurableInterpreter) AggregateStatus(object *unstructured.Unstructured, aggregatedStatusItems []workv1alpha2.AggregatedStatusItem) (status *unstructured.Unstructured, enabled bool, err error) {
-	klog.V(4).Infof("Aggregate status of object: %v %s/%s with thirdparty configurable interpreter.", object.GroupVersionKind(), object.GetNamespace(), object.GetName())
 	customAccessor, enabled := p.getCustomAccessor(object.GroupVersionKind())
 	if !enabled {
 		return
@@ -137,14 +157,14 @@ func (p *ConfigurableInterpreter) AggregateStatus(object *unstructured.Unstructu
 		return
 	}
 
+	klog.V(4).Infof("Running operation %s for object: %v %s/%s with thirdparty configurable interpreter.",
+		configv1alpha1.InterpreterOperationAggregateStatus, object.GroupVersionKind(), object.GetNamespace(), object.GetName())
 	status, err = p.luaVM.AggregateStatus(object, aggregatedStatusItems, script)
 	return
 }
 
 // GetDependencies returns the dependent resources of the given object.
 func (p *ConfigurableInterpreter) GetDependencies(object *unstructured.Unstructured) (dependencies []configv1alpha1.DependentObjectReference, enabled bool, err error) {
-	klog.V(4).Infof("Get dependencies of object: %v %s/%s with thirdparty configurable interpreter.", object.GroupVersionKind(), object.GetNamespace(), object.GetName())
-
 	customAccessor, enabled := p.getCustomAccessor(object.GroupVersionKind())
 	if !enabled {
 		return
@@ -156,6 +176,8 @@ func (p *ConfigurableInterpreter) GetDependencies(object *unstructured.Unstructu
 		return
 	}
 
+	klog.V(4).Infof("Running operation %s for object: %v %s/%s with thirdparty configurable interpreter.",
+		configv1alpha1.InterpreterOperationInterpretDependency, object.GroupVersionKind(), object.GetNamespace(), object.GetName())
 	refs := sets.New[configv1alpha1.DependentObjectReference]()
 	for _, luaScript := range scripts {
 		var references []configv1alpha1.DependentObjectReference
@@ -191,8 +213,6 @@ func (p *ConfigurableInterpreter) GetDependencies(object *unstructured.Unstructu
 
 // ReflectStatus returns the status of the object.
 func (p *ConfigurableInterpreter) ReflectStatus(object *unstructured.Unstructured) (status *runtime.RawExtension, enabled bool, err error) {
-	klog.V(4).Infof("Reflect status of object: %v %s/%s with thirdparty configurable interpreter.", object.GroupVersionKind(), object.GetNamespace(), object.GetName())
-
 	customAccessor, enabled := p.getCustomAccessor(object.GroupVersionKind())
 	if !enabled {
 		return
@@ -204,14 +224,14 @@ func (p *ConfigurableInterpreter) ReflectStatus(object *unstructured.Unstructure
 		return
 	}
 
+	klog.V(4).Infof("Running operation %s for object: %v %s/%s with thirdparty configurable interpreter.",
+		configv1alpha1.InterpreterOperationInterpretStatus, object.GroupVersionKind(), object.GetNamespace(), object.GetName())
 	status, err = p.luaVM.ReflectStatus(object, script)
 	return
 }
 
 // InterpretHealth returns the health state of the object.
 func (p *ConfigurableInterpreter) InterpretHealth(object *unstructured.Unstructured) (health bool, enabled bool, err error) {
-	klog.V(4).Infof("Get health status of object: %v %s/%s with thirdparty configurable interpreter.", object.GroupVersionKind(), object.GetNamespace(), object.GetName())
-
 	customAccessor, enabled := p.getCustomAccessor(object.GroupVersionKind())
 	if !enabled {
 		return
@@ -223,6 +243,8 @@ func (p *ConfigurableInterpreter) InterpretHealth(object *unstructured.Unstructu
 		return
 	}
 
+	klog.V(4).Infof("Running operation %s for object: %v %s/%s with thirdparty configurable interpreter.",
+		configv1alpha1.InterpreterOperationInterpretHealth, object.GroupVersionKind(), object.GetNamespace(), object.GetName())
 	health, err = p.luaVM.InterpretHealth(object, script)
 	return
 }

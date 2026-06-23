@@ -25,24 +25,31 @@ import (
 
 	"k8s.io/client-go/informers"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/klog/v2"
 
-	"github.com/karmada-io/karmada/pkg/estimator/pb"
 	"github.com/karmada-io/karmada/pkg/estimator/server/framework"
 	"github.com/karmada-io/karmada/pkg/estimator/server/metrics"
-	schedcache "github.com/karmada-io/karmada/pkg/util/lifted/scheduler/cache"
 	utilmetrics "github.com/karmada-io/karmada/pkg/util/metrics"
 )
 
 const (
-	estimator = "Estimator"
+	// estimateReplicasExtension is used as the metric label value to identify
+	// the "estimate replicas" extension point when recording framework and plugin durations.
+	estimateReplicasExtension = "estimate_replicas"
+
+	// estimateComponentsExtension is used as the metric label value to identify
+	// the "estimate components" extension point when recording framework and plugin durations.
+	estimateComponentsExtension = "estimate_components"
 )
 
 // frameworkImpl implements the Framework interface and is responsible for initializing and running scheduler
 // plugins.
 type frameworkImpl struct {
-	estimateReplicasPlugins []framework.EstimateReplicasPlugin
-	clientSet               clientset.Interface
-	informerFactory         informers.SharedInformerFactory
+	estimateReplicasPlugins   []framework.EstimateReplicasPlugin
+	estimateComponentsPlugins []framework.EstimateComponentsPlugin
+	clientSet                 clientset.Interface
+	informerFactory           informers.SharedInformerFactory
+	parallelism               int
 }
 
 var _ framework.Framework = &frameworkImpl{}
@@ -50,6 +57,7 @@ var _ framework.Framework = &frameworkImpl{}
 type frameworkOptions struct {
 	clientSet       clientset.Interface
 	informerFactory informers.SharedInformerFactory
+	parallelism     int
 }
 
 // Option for the frameworkImpl.
@@ -73,6 +81,13 @@ func WithInformerFactory(informerFactory informers.SharedInformerFactory) Option
 	}
 }
 
+// WithParallelism sets parallelism for the scheduling frameworkImpl.
+func WithParallelism(parallelism int) Option {
+	return func(o *frameworkOptions) {
+		o.parallelism = parallelism
+	}
+}
+
 // NewFramework creates a scheduling framework by registry.
 func NewFramework(r Registry, opts ...Option) (framework.Framework, error) {
 	options := defaultFrameworkOptions()
@@ -85,12 +100,16 @@ func NewFramework(r Registry, opts ...Option) (framework.Framework, error) {
 	estimateReplicasPluginsList := reflect.ValueOf(&f.estimateReplicasPlugins).Elem()
 	estimateReplicasType := estimateReplicasPluginsList.Type().Elem()
 
+	estimateComponentsPluginsList := reflect.ValueOf(&f.estimateComponentsPlugins).Elem()
+	estimateComponentsType := estimateComponentsPluginsList.Type().Elem()
+
 	for name, factory := range r {
 		p, err := factory(f)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize plugin %q: %w", name, err)
 		}
 		addPluginToList(p, estimateReplicasType, &estimateReplicasPluginsList)
+		addPluginToList(p, estimateComponentsType, &estimateComponentsPluginsList)
 	}
 	return f, nil
 }
@@ -112,35 +131,74 @@ func (frw *frameworkImpl) SharedInformerFactory() informers.SharedInformerFactor
 	return frw.informerFactory
 }
 
+// Parallelism returns the amount of parallelism in algorithms for estimating.
+func (frw *frameworkImpl) Parallelism() int {
+	return frw.parallelism
+}
+
 // RunEstimateReplicasPlugins runs the set of configured EstimateReplicasPlugins
-// for estimating replicas based on the given replicaRequirements.
-// It returns an integer and an error.
+// for estimating replicas based on the given estCtx.
+// It returns an integer and a Result.
 // The integer represents the minimum calculated value of estimated replicas from each EstimateReplicasPlugin.
-func (frw *frameworkImpl) RunEstimateReplicasPlugins(ctx context.Context, snapshot *schedcache.Snapshot, replicaRequirements *pb.ReplicaRequirements) (int32, *framework.Result) {
+func (frw *frameworkImpl) RunEstimateReplicasPlugins(ctx context.Context, estCtx framework.ReplicaEstimationContext) (int32, *framework.Result) {
 	startTime := time.Now()
 	defer func() {
-		metrics.FrameworkExtensionPointDuration.WithLabelValues(estimator).Observe(utilmetrics.DurationInSeconds(startTime))
+		metrics.FrameworkExtensionPointDuration.WithLabelValues(estimateReplicasExtension).Observe(utilmetrics.DurationInSeconds(startTime))
 	}()
+
 	var replica int32 = math.MaxInt32
 	results := make(framework.PluginToResult)
 	for _, pl := range frw.estimateReplicasPlugins {
-		plReplica, ret := frw.runEstimateReplicasPlugins(ctx, pl, snapshot, replicaRequirements)
+		plReplica, ret := frw.runEstimateReplicasPlugins(ctx, pl, estCtx)
 		if (ret.IsSuccess() || ret.IsUnschedulable()) && plReplica < replica {
 			replica = plReplica
 		}
+		if ret.IsFailed() {
+			replica = 0
+		}
 		results[pl.Name()] = ret
 	}
+	klog.V(4).InfoS("EstimateReplicas final result", "replicas", replica)
 	return replica, results.Merge()
 }
 
-func (frw *frameworkImpl) runEstimateReplicasPlugins(
-	ctx context.Context,
-	pl framework.EstimateReplicasPlugin,
-	snapshot *schedcache.Snapshot,
-	replicaRequirements *pb.ReplicaRequirements,
-) (int32, *framework.Result) {
+func (frw *frameworkImpl) runEstimateReplicasPlugins(ctx context.Context, pl framework.EstimateReplicasPlugin, estCtx framework.ReplicaEstimationContext) (int32, *framework.Result) {
 	startTime := time.Now()
-	replica, ret := pl.Estimate(ctx, snapshot, replicaRequirements)
-	metrics.PluginExecutionDuration.WithLabelValues(pl.Name(), estimator).Observe(utilmetrics.DurationInSeconds(startTime))
+	replica, ret := pl.Estimate(ctx, estCtx)
+
+	metrics.PluginExecutionDuration.WithLabelValues(pl.Name(), estimateReplicasExtension).Observe(utilmetrics.DurationInSeconds(startTime))
+	klog.V(4).InfoS("EstimateReplicas plugin result", "plugin", pl.Name(), "replicas", replica, "status", ret.Code())
 	return replica, ret
+}
+
+// RunEstimateComponentsPlugins runs the set of configured EstimateComponentsPlugins
+// for estimating the maximum number of complete component sets based on the given
+// components estimation request, including its components, namespace, and assumptions.
+// It returns an integer and a Result.
+// The integer represents the minimum calculated value of estimated component sets from each EstimateComponentsPlugin.
+func (frw *frameworkImpl) RunEstimateComponentsPlugins(ctx context.Context, estCtx framework.ComponentEstimationContext) (int32, *framework.Result) {
+	startTime := time.Now()
+	defer func() {
+		metrics.FrameworkExtensionPointDuration.WithLabelValues(estimateComponentsExtension).Observe(utilmetrics.DurationInSeconds(startTime))
+	}()
+
+	var sets int32 = math.MaxInt32
+	results := make(framework.PluginToResult)
+	for _, pl := range frw.estimateComponentsPlugins {
+		plSets, ret := frw.runEstimateComponentsPlugins(ctx, pl, estCtx)
+		if (ret.IsSuccess() || ret.IsUnschedulable()) && plSets < sets {
+			sets = plSets
+		}
+		results[pl.Name()] = ret
+	}
+	klog.V(4).InfoS("EstimateComponents final result", "sets", sets)
+	return sets, results.Merge()
+}
+
+func (frw *frameworkImpl) runEstimateComponentsPlugins(ctx context.Context, pl framework.EstimateComponentsPlugin, estCtx framework.ComponentEstimationContext) (int32, *framework.Result) {
+	startTime := time.Now()
+	sets, ret := pl.EstimateComponents(ctx, estCtx)
+	metrics.PluginExecutionDuration.WithLabelValues(pl.Name(), estimateComponentsExtension).Observe(utilmetrics.DurationInSeconds(startTime))
+	klog.V(4).InfoS("EstimateComponents plugin result", "plugin", pl.Name(), "sets", sets, "status", ret.Code())
+	return sets, ret
 }

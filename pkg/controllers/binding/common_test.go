@@ -24,7 +24,6 @@ import (
 	v1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/utils/ptr"
 
 	policyv1alpha1 "github.com/karmada-io/karmada/pkg/apis/policy/v1alpha1"
 	workv1alpha2 "github.com/karmada-io/karmada/pkg/apis/work/v1alpha2"
@@ -116,10 +115,10 @@ func Test_mergeLabel(t *testing.T) {
 		{
 			name: "NamespaceScoped",
 			workload: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "Deployment",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "demo-deployment",
 						"namespace": namespace,
 					},
@@ -142,10 +141,10 @@ func Test_mergeLabel(t *testing.T) {
 		{
 			name: "ClusterScoped",
 			workload: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "v1",
 					"kind":       "Namespace",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name": "demo-ns",
 					},
 				},
@@ -196,10 +195,10 @@ func Test_mergeAnnotations(t *testing.T) {
 		{
 			name: "NamespaceScoped",
 			workload: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "apps/v1",
 					"kind":       "Deployment",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name":      "demo-deployment",
 						"namespace": namespace,
 					},
@@ -220,10 +219,10 @@ func Test_mergeAnnotations(t *testing.T) {
 		{
 			name: "ClusterScoped",
 			workload: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"apiVersion": "v1",
 					"kind":       "Namespace",
-					"metadata": map[string]interface{}{
+					"metadata": map[string]any{
 						"name": "demo-ns",
 					},
 				},
@@ -251,10 +250,10 @@ func Test_mergeAnnotations(t *testing.T) {
 func Test_mergeConflictResolution(t *testing.T) {
 	namespace := "fake-ns"
 	workload := unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "apps/v1",
 			"kind":       "Deployment",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name":      "test-deployment",
 				"namespace": namespace,
 			},
@@ -344,14 +343,14 @@ func Test_shouldSuspendDispatching(t *testing.T) {
 		{
 			name: "false for not suspension",
 			args: args{
-				suspension: &workv1alpha2.Suspension{Suspension: policyv1alpha1.Suspension{Dispatching: ptr.To(false)}},
+				suspension: &workv1alpha2.Suspension{Suspension: policyv1alpha1.Suspension{Dispatching: new(false)}},
 			},
 			want: false,
 		},
 		{
 			name: "true for suspension",
 			args: args{
-				suspension: &workv1alpha2.Suspension{Suspension: policyv1alpha1.Suspension{Dispatching: ptr.To(true)}},
+				suspension: &workv1alpha2.Suspension{Suspension: policyv1alpha1.Suspension{Dispatching: new(true)}},
 			},
 			want: true,
 		},
@@ -376,34 +375,6 @@ func Test_shouldSuspendDispatching(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := shouldSuspendDispatching(tt.args.suspension, tt.args.targetCluster); got != tt.want {
 				t.Errorf("shouldSuspendDispatching() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func Test_needReviseReplicas(t *testing.T) {
-	tests := []struct {
-		name      string
-		replicas  int32
-		placement *policyv1alpha1.Placement
-		want      bool
-	}{
-		{
-			name:     "replicas is zero",
-			replicas: 0,
-			want:     false,
-		},
-		{
-			name:     "replicas is greater than zero",
-			replicas: 1,
-			want:     true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := needReviseReplicas(tt.replicas); got != tt.want {
-				t.Errorf("needReviseReplicas() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -474,8 +445,8 @@ func Test_divideReplicasByJobCompletions(t *testing.T) {
 		{
 			name: "completions found",
 			workload: &unstructured.Unstructured{
-				Object: map[string]interface{}{
-					"spec": map[string]interface{}{
+				Object: map[string]any{
+					"spec": map[string]any{
 						"completions": int64(10),
 					},
 				},
@@ -493,7 +464,7 @@ func Test_divideReplicasByJobCompletions(t *testing.T) {
 		{
 			name: "error in NestedInt64",
 			workload: &unstructured.Unstructured{
-				Object: map[string]interface{}{
+				Object: map[string]any{
 					"spec": "invalid",
 				},
 			},
@@ -525,5 +496,112 @@ func Test_divideReplicasByJobCompletions(t *testing.T) {
 				t.Errorf("divideReplicasByJobCompletions() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestBuildJobCompletionsMap(t *testing.T) {
+	tests := []struct {
+		name        string
+		completions []workv1alpha2.TargetCluster
+		want        map[string]int32
+	}{
+		{
+			name: "multiple clusters with different replica counts",
+			completions: []workv1alpha2.TargetCluster{
+				{Name: "cluster-a", Replicas: 6},
+				{Name: "cluster-b", Replicas: 4},
+			},
+			want: map[string]int32{
+				"cluster-a": 6,
+				"cluster-b": 4,
+			},
+		},
+		{
+			name:        "empty completions",
+			completions: []workv1alpha2.TargetCluster{},
+			want:        map[string]int32{},
+		},
+		{
+			name: "single cluster",
+			completions: []workv1alpha2.TargetCluster{
+				{Name: "cluster-a", Replicas: 10},
+			},
+			want: map[string]int32{
+				"cluster-a": 10,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := buildJobCompletionsMap(tt.completions)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("buildJobCompletionsMap() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestApplyJobCompletions(t *testing.T) {
+	tests := []struct {
+		name            string
+		workload        *unstructured.Unstructured
+		clusterName     string
+		completionsMap  map[string]int32
+		wantErr         bool
+		wantCompletions int64
+	}{
+		{
+			name:        "apply completions successfully",
+			workload:    generateJobWorkload("test-job"),
+			clusterName: "cluster-a",
+			completionsMap: map[string]int32{
+				"cluster-a": 6,
+				"cluster-b": 4,
+			},
+			wantErr:         false,
+			wantCompletions: 6,
+		},
+		{
+			name:        "cluster not in map returns error",
+			workload:    generateJobWorkload("test-job"),
+			clusterName: "cluster-c",
+			completionsMap: map[string]int32{
+				"cluster-a": 6,
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := applyJobCompletions(tt.workload, tt.clusterName, tt.completionsMap)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("applyJobCompletions() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr {
+				got, _, _ := unstructured.NestedInt64(tt.workload.Object, "spec", "completions")
+				if got != tt.wantCompletions {
+					t.Errorf("completions = %v, want %v", got, tt.wantCompletions)
+				}
+			}
+		})
+	}
+}
+
+func generateJobWorkload(name string) *unstructured.Unstructured {
+	return &unstructured.Unstructured{
+		Object: map[string]any{
+			"apiVersion": "batch/v1",
+			"kind":       "Job",
+			"metadata": map[string]any{
+				"name": name,
+			},
+			"spec": map[string]any{
+				"completions": int64(10),
+				"parallelism": int64(2),
+			},
+		},
 	}
 }

@@ -18,6 +18,7 @@ package coredns
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -108,8 +109,8 @@ func TestNewCorednsDetector(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			memberClusterClient := fake.NewSimpleClientset()
-			karmadaClient := karmadafake.NewSimpleClientset()
+			memberClusterClient := fake.NewClientset()
+			karmadaClient := karmadafake.NewClientset()
 			informerFactory := informers.NewSharedInformerFactory(memberClusterClient, 0)
 
 			cfg := &Config{
@@ -164,13 +165,7 @@ func TestLookupOnce(t *testing.T) {
 				t.Errorf("Expected condition type to be '%s', got '%s'", tt.expectedType, condition.Type)
 			}
 
-			validStatus := false
-			for _, status := range tt.expectedStatus {
-				if condition.Status == status {
-					validStatus = true
-					break
-				}
-			}
+			validStatus := slices.Contains(tt.expectedStatus, condition.Status)
 			if !validStatus {
 				t.Errorf("Expected condition status to be one of %v, got '%s'", tt.expectedStatus, condition.Status)
 			}
@@ -310,8 +305,8 @@ func TestDetectorRun(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			memberClusterClient := fake.NewSimpleClientset()
-			karmadaClient := karmadafake.NewSimpleClientset()
+			memberClusterClient := fake.NewClientset()
+			karmadaClient := karmadafake.NewClientset()
 			informerFactory := informers.NewSharedInformerFactory(memberClusterClient, 0)
 
 			cfg := &Config{
@@ -389,8 +384,8 @@ func TestDetectorWorker(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			memberClusterClient := fake.NewSimpleClientset()
-			karmadaClient := karmadafake.NewSimpleClientset()
+			memberClusterClient := fake.NewClientset()
+			karmadaClient := karmadafake.NewClientset()
 			informerFactory := informers.NewSharedInformerFactory(memberClusterClient, 0)
 
 			cfg := &Config{
@@ -464,8 +459,8 @@ func TestDetectorProcessNextWorkItem(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			memberClusterClient := fake.NewSimpleClientset()
-			karmadaClient := karmadafake.NewSimpleClientset()
+			memberClusterClient := fake.NewClientset()
+			karmadaClient := karmadafake.NewClientset()
 			informerFactory := informers.NewSharedInformerFactory(memberClusterClient, 0)
 
 			cfg := &Config{
@@ -553,7 +548,7 @@ func TestDetectorSync(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			karmadaClient := karmadafake.NewSimpleClientset()
+			karmadaClient := karmadafake.NewClientset()
 
 			d := &Detector{
 				karmadaClient: karmadaClient,

@@ -34,7 +34,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	autoscalingv1alpha1 "github.com/karmada-io/karmada/pkg/apis/autoscaling/v1alpha1"
@@ -55,6 +54,11 @@ func (m *MockClient) Get(ctx context.Context, key client.ObjectKey, obj client.O
 
 func (m *MockClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
 	args := m.Called(ctx, list, opts)
+	return args.Error(0)
+}
+
+func (m *MockClient) Apply(ctx context.Context, obj runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
+	args := m.Called(ctx, obj, opts)
 	return args.Error(0)
 }
 
@@ -803,7 +807,7 @@ func TestStoreScaleEvent(t *testing.T) {
 			name: "Scale up event",
 			behavior: &autoscalingv2.HorizontalPodAutoscalerBehavior{
 				ScaleUp: &autoscalingv2.HPAScalingRules{
-					StabilizationWindowSeconds: ptr.To[int32](int32(60)),
+					StabilizationWindowSeconds: new(int32(60)),
 				},
 			},
 			key:          "test-hpa",
@@ -816,7 +820,7 @@ func TestStoreScaleEvent(t *testing.T) {
 			name: "Scale down event",
 			behavior: &autoscalingv2.HorizontalPodAutoscalerBehavior{
 				ScaleDown: &autoscalingv2.HPAScalingRules{
-					StabilizationWindowSeconds: ptr.To[int32](int32(60)),
+					StabilizationWindowSeconds: new(int32(60)),
 				},
 			},
 			key:          "test-hpa",
@@ -1479,7 +1483,7 @@ func TestSetCondition(t *testing.T) {
 		status         corev1.ConditionStatus
 		reason         string
 		message        string
-		args           []interface{}
+		args           []any
 		expectedLength int
 		checkIndex     int
 	}{
@@ -1519,7 +1523,7 @@ func TestSetCondition(t *testing.T) {
 			status:         corev1.ConditionTrue,
 			reason:         "FormattedReason",
 			message:        "Formatted message: %d",
-			args:           []interface{}{42},
+			args:           []any{42},
 			expectedLength: 1,
 			checkIndex:     0,
 		},
@@ -1555,7 +1559,7 @@ func TestSetConditionInList(t *testing.T) {
 		status         corev1.ConditionStatus
 		reason         string
 		message        string
-		args           []interface{}
+		args           []any
 		expectedLength int
 		checkIndex     int
 	}{
@@ -1596,7 +1600,7 @@ func TestSetConditionInList(t *testing.T) {
 			status:         corev1.ConditionTrue,
 			reason:         "FormattedReason",
 			message:        "Formatted message: %d",
-			args:           []interface{}{42},
+			args:           []any{42},
 			expectedLength: 2,
 			checkIndex:     1,
 		},

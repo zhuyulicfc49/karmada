@@ -21,6 +21,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	kuberuntime "k8s.io/apimachinery/pkg/runtime"
 	clientset "k8s.io/client-go/kubernetes"
@@ -28,10 +29,14 @@ import (
 
 	operatorv1alpha1 "github.com/karmada-io/karmada/operator/pkg/apis/operator/v1alpha1"
 	"github.com/karmada-io/karmada/operator/pkg/controlplane/etcd"
+	"github.com/karmada-io/karmada/operator/pkg/controlplane/pdb"
 	"github.com/karmada-io/karmada/operator/pkg/util"
 	"github.com/karmada-io/karmada/operator/pkg/util/apiclient"
 	"github.com/karmada-io/karmada/operator/pkg/util/patcher"
 )
+
+// DeploymentGVK represents the GroupVersionKind (GVK) for a Kubernetes Deployment resource.
+var DeploymentGVK = appsv1.SchemeGroupVersion.WithKind("Deployment")
 
 // EnsureKarmadaAPIServer creates karmada apiserver deployment and service resource
 func EnsureKarmadaAPIServer(client clientset.Interface, cfg *operatorv1alpha1.KarmadaComponents, name, namespace string, featureGates map[string]bool) error {
@@ -82,11 +87,18 @@ func installKarmadaAPIServer(client clientset.Interface, cfg *operatorv1alpha1.K
 	patcher.NewPatcher().WithAnnotations(cfg.Annotations).WithLabels(cfg.Labels).
 		WithPriorityClassName(cfg.CommonSettings.PriorityClassName).
 		WithExtraArgs(cfg.ExtraArgs).WithExtraVolumeMounts(cfg.ExtraVolumeMounts).
-		WithExtraVolumes(cfg.ExtraVolumes).WithSidecarContainers(cfg.SidecarContainers).WithResources(cfg.Resources).ForDeployment(apiserverDeployment)
+		WithExtraVolumes(cfg.ExtraVolumes).WithSidecarContainers(cfg.SidecarContainers).WithResources(cfg.Resources).
+		WithTolerations(cfg.CommonSettings.Tolerations).WithAffinity(cfg.CommonSettings.Affinity).ForDeployment(apiserverDeployment)
 
-	if err := apiclient.CreateOrUpdateDeployment(client, apiserverDeployment); err != nil {
+	if apiserverDeployment, err = apiclient.CreateOrUpdateDeployment(client, apiserverDeployment); err != nil {
 		return fmt.Errorf("error when creating deployment for %s, err: %w", apiserverDeployment.Name, err)
 	}
+
+	ownerRef := *metav1.NewControllerRef(apiserverDeployment, DeploymentGVK)
+	if err := pdb.EnsurePodDisruptionBudget(client, util.KarmadaAPIServerName(name), namespace, cfg.CommonSettings.PodDisruptionBudgetConfig, apiserverDeployment.Spec.Template.Labels, []metav1.OwnerReference{ownerRef}); err != nil {
+		return fmt.Errorf("failed to ensure PDB for apiserver component %s, err: %w", util.KarmadaAPIServerName(name), err)
+	}
+
 	return nil
 }
 
@@ -153,11 +165,18 @@ func installKarmadaAggregatedAPIServer(client clientset.Interface, cfg *operator
 
 	patcher.NewPatcher().WithAnnotations(cfg.Annotations).WithLabels(cfg.Labels).
 		WithPriorityClassName(cfg.CommonSettings.PriorityClassName).
-		WithExtraArgs(cfg.ExtraArgs).WithFeatureGates(featureGates).WithResources(cfg.Resources).ForDeployment(aggregatedAPIServerDeployment)
+		WithExtraArgs(cfg.ExtraArgs).WithFeatureGates(featureGates).WithResources(cfg.Resources).
+		WithTolerations(cfg.CommonSettings.Tolerations).WithAffinity(cfg.CommonSettings.Affinity).ForDeployment(aggregatedAPIServerDeployment)
 
-	if err := apiclient.CreateOrUpdateDeployment(client, aggregatedAPIServerDeployment); err != nil {
+	if aggregatedAPIServerDeployment, err = apiclient.CreateOrUpdateDeployment(client, aggregatedAPIServerDeployment); err != nil {
 		return fmt.Errorf("error when creating deployment for %s, err: %w", aggregatedAPIServerDeployment.Name, err)
 	}
+
+	ownerRef := *metav1.NewControllerRef(aggregatedAPIServerDeployment, DeploymentGVK)
+	if err := pdb.EnsurePodDisruptionBudget(client, util.KarmadaAggregatedAPIServerName(name), namespace, cfg.CommonSettings.PodDisruptionBudgetConfig, aggregatedAPIServerDeployment.Spec.Template.Labels, []metav1.OwnerReference{ownerRef}); err != nil {
+		return fmt.Errorf("failed to ensure PDB for aggregated apiserver component %s, err: %w", util.KarmadaAggregatedAPIServerName(name), err)
+	}
+
 	return nil
 }
 

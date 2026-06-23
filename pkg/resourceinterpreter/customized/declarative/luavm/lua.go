@@ -71,7 +71,7 @@ func (vm *VM) NewLuaState() (*lua.LState, error) {
 }
 
 // RunScript got a lua vm from pool, and execute script with given arguments.
-func (vm *VM) RunScript(script string, fnName string, nRets int, args ...interface{}) ([]lua.LValue, error) {
+func (vm *VM) RunScript(script string, fnName string, nRets int, args ...any) ([]lua.LValue, error) {
 	a, err := vm.Pool.Get()
 	if err != nil {
 		return nil, err
@@ -152,6 +152,33 @@ func (vm *VM) GetReplicas(obj *unstructured.Unstructured, script string) (replic
 	}
 
 	return
+}
+
+// GetComponents returns the desired components of the object by executing a Lua script.
+func (vm *VM) GetComponents(obj *unstructured.Unstructured, script string) ([]workv1alpha2.Component, error) {
+	results, err := vm.RunScript(script, "GetComponents", 1, obj)
+	if err != nil {
+		return nil, fmt.Errorf("failed to run 'GetComponents' script: %w", err)
+	}
+
+	componentsResult := results[0]
+	var components []workv1alpha2.Component
+
+	switch componentsResult.Type() {
+	case lua.LTTable:
+		if err := ConvertLuaResultInto(componentsResult.(*lua.LTable), &components); err != nil {
+			klog.Errorf("Failed to convert Lua result for GetComponents: %v", err)
+			return nil, fmt.Errorf("failed to convert lua table for components: %w", err)
+		}
+	case lua.LTNil:
+		// This is a valid case where the script returns no components.
+		// The 'components' slice is already nil, so we do nothing.
+	default:
+		// Handle unexpected return types.
+		return nil, fmt.Errorf("expected result type 'table' or 'nil' from GetComponents, but got '%s'", componentsResult.Type())
+	}
+
+	return components, nil
 }
 
 // ReviseReplica revises the replica of the given object by lua.
@@ -333,10 +360,10 @@ func NewWithContext(ctx context.Context) (*lua.LState, error) {
 }
 
 // nolint:gocyclo
-func decodeValue(L *lua.LState, value interface{}) (lua.LValue, error) {
+func decodeValue(L *lua.LState, value any) (lua.LValue, error) {
 	// We handle simple type without json for better performance.
 	switch converted := value.(type) {
-	case []interface{}:
+	case []any:
 		arr := L.CreateTable(len(converted), 0)
 		for _, item := range converted {
 			v, err := decodeValue(L, item)
@@ -346,7 +373,7 @@ func decodeValue(L *lua.LState, value interface{}) (lua.LValue, error) {
 			arr.Append(v)
 		}
 		return arr, nil
-	case map[string]interface{}:
+	case map[string]any:
 		tbl := L.CreateTable(0, len(converted))
 		for key, item := range converted {
 			v, err := decodeValue(L, item)

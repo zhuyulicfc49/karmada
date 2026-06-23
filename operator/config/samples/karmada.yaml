@@ -4,14 +4,11 @@ metadata:
   name: karmada-demo
   namespace: test
 spec:
-  crdTarball:
-    httpSource: 
-      url: "https://github.com/karmada-io/karmada/releases/download/v1.14.0/crds.tar.gz"
   components:
     etcd:
       local:
         imageRepository: registry.k8s.io/etcd
-        imageTag: 3.5.16-0
+        imageTag: 3.6.6-0
         replicas: 1
         volumeData:
           # hostPath:
@@ -28,41 +25,41 @@ spec:
                   storage: 3Gi
     karmadaAPIServer:
       imageRepository: registry.k8s.io/kube-apiserver
-      imageTag: v1.31.3
+      imageTag: v1.35.2
       replicas: 1
       serviceType: NodePort
       serviceSubnet: 10.96.0.0/12
     karmadaAggregatedAPIServer:
       imageRepository: docker.io/karmada/karmada-aggregated-apiserver
-      imageTag: v1.14.0
+      imageTag: latest
       replicas: 1
     karmadaControllerManager:
       imageRepository: docker.io/karmada/karmada-controller-manager
-      imageTag: v1.14.0
+      imageTag: latest
       replicas: 1
     karmadaScheduler:
       imageRepository: docker.io/karmada/karmada-scheduler
-      imageTag: v1.14.0
+      imageTag: latest
       replicas: 1
     karmadaWebhook:
       imageRepository: docker.io/karmada/karmada-webhook
-      imageTag: v1.14.0
+      imageTag: latest
       replicas: 1
     kubeControllerManager:
       imageRepository: registry.k8s.io/kube-controller-manager
-      imageTag: v1.31.3
+      imageTag: v1.35.2
       replicas: 1
     karmadaMetricsAdapter:
       imageRepository: docker.io/karmada/karmada-metrics-adapter
-      imageTag: v1.14.0
+      imageTag: latest
       replicas: 2
     # karmadaSearch: # the component `Karmadasearch` is not installed by default, if you need to install it, uncomment it and note the formatting
       # imageRepository: docker.io/karmada/karmada-search
-      # imageTag: v1.14.0
+      # imageTag: latest
       # replicas: 1
     # karmadaDescheduler: # the component `KarmadaDescheduler` is not installed by default, if you need to install it, uncomment it and note the formatting
       # imageRepository: docker.io/karmada/karmada-descheduler
-      # imageTag: v1.14.0
+      # imageTag: latest
       # replicas: 1
   hostCluster:
     networking:

@@ -30,7 +30,6 @@ import (
 	apiregistrationv1 "k8s.io/kube-aggregator/pkg/apis/apiregistration/v1"
 	aggregator "k8s.io/kube-aggregator/pkg/client/clientset_generated/clientset"
 	fakeAggregator "k8s.io/kube-aggregator/pkg/client/clientset_generated/clientset/fake"
-	"k8s.io/utils/ptr"
 
 	addoninit "github.com/karmada-io/karmada/pkg/karmadactl/addons/init"
 	addonutils "github.com/karmada-io/karmada/pkg/karmadactl/addons/utils"
@@ -54,7 +53,7 @@ func TestKarmadaSearchAddonStatus(t *testing.T) {
 			name: "Status_WithoutKarmadaSearch_AddonDisabledStatus",
 			listOpts: &addoninit.CommandAddonsListOption{
 				GlobalCommandOptions: addoninit.GlobalCommandOptions{
-					KubeClientSet: fakeclientset.NewSimpleClientset(),
+					KubeClientSet: fakeclientset.NewClientset(),
 				},
 			},
 			prep:       func(*addoninit.CommandAddonsListOption) error { return nil },
@@ -64,7 +63,7 @@ func TestKarmadaSearchAddonStatus(t *testing.T) {
 			name: "Status_WithNetworkIssue_AddonUnknownStatus",
 			listOpts: &addoninit.CommandAddonsListOption{
 				GlobalCommandOptions: addoninit.GlobalCommandOptions{
-					KubeClientSet: fakeclientset.NewSimpleClientset(),
+					KubeClientSet: fakeclientset.NewClientset(),
 				},
 			},
 			prep: func(listOpts *addoninit.CommandAddonsListOption) error {
@@ -79,7 +78,7 @@ func TestKarmadaSearchAddonStatus(t *testing.T) {
 			listOpts: &addoninit.CommandAddonsListOption{
 				GlobalCommandOptions: addoninit.GlobalCommandOptions{
 					Namespace:     namespace,
-					KubeClientSet: fakeclientset.NewSimpleClientset(),
+					KubeClientSet: fakeclientset.NewClientset(),
 				},
 			},
 			prep: func(listOpts *addoninit.CommandAddonsListOption) error {
@@ -96,7 +95,7 @@ func TestKarmadaSearchAddonStatus(t *testing.T) {
 			listOpts: &addoninit.CommandAddonsListOption{
 				GlobalCommandOptions: addoninit.GlobalCommandOptions{
 					Namespace:                  namespace,
-					KubeClientSet:              fakeclientset.NewSimpleClientset(),
+					KubeClientSet:              fakeclientset.NewClientset(),
 					KarmadaAggregatorClientSet: fakeAggregator.NewSimpleClientset(),
 				},
 			},
@@ -110,7 +109,7 @@ func TestKarmadaSearchAddonStatus(t *testing.T) {
 			listOpts: &addoninit.CommandAddonsListOption{
 				GlobalCommandOptions: addoninit.GlobalCommandOptions{
 					Namespace:                  namespace,
-					KubeClientSet:              fakeclientset.NewSimpleClientset(),
+					KubeClientSet:              fakeclientset.NewClientset(),
 					KarmadaAggregatorClientSet: fakeAggregator.NewSimpleClientset(),
 				},
 			},
@@ -132,7 +131,7 @@ func TestKarmadaSearchAddonStatus(t *testing.T) {
 			listOpts: &addoninit.CommandAddonsListOption{
 				GlobalCommandOptions: addoninit.GlobalCommandOptions{
 					Namespace:                  namespace,
-					KubeClientSet:              fakeclientset.NewSimpleClientset(),
+					KubeClientSet:              fakeclientset.NewClientset(),
 					KarmadaAggregatorClientSet: fakeAggregator.NewSimpleClientset(),
 				},
 			},
@@ -173,7 +172,7 @@ func TestKarmadaSearchAddonStatus(t *testing.T) {
 func createKarmadaSearchDeployment(c clientset.Interface, replicas int32, namespace, priorityClass string) error {
 	karmadaSearchDeploymentBytes, err := addonutils.ParseTemplate(karmadaSearchDeployment, DeploymentReplace{
 		Namespace:         namespace,
-		Replicas:          ptr.To(replicas),
+		Replicas:          new(replicas),
 		PriorityClassName: priorityClass,
 	})
 	if err != nil {

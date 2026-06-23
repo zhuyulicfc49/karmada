@@ -90,33 +90,33 @@ func NewFramework(r Registry, opts ...Option) (framework.Framework, error) {
 
 // RunFilterPlugins runs the set of configured Filter plugins for resources on the cluster.
 // If any of the result is not success, the cluster is not suited for the resource.
-func (frw *frameworkImpl) RunFilterPlugins(
-	ctx context.Context,
-	bindingSpec *workv1alpha2.ResourceBindingSpec,
-	bindingStatus *workv1alpha2.ResourceBindingStatus,
-	cluster *clusterv1alpha1.Cluster,
-) (result *framework.Result) {
+func (frw *frameworkImpl) RunFilterPlugins(filterCtx *framework.FilterContext) (result *framework.Result) {
 	startTime := time.Now()
 	defer func() {
 		metrics.FrameworkExtensionPointDuration.WithLabelValues(filter, result.Code().String()).Observe(utilmetrics.DurationInSeconds(startTime))
 	}()
+
 	for _, p := range frw.filterPlugins {
-		if result := frw.runFilterPlugin(ctx, p, bindingSpec, bindingStatus, cluster); !result.IsSuccess() {
+		if result := frw.runFilterPluginWithContext(p, filterCtx); !result.IsSuccess() {
 			return result
 		}
 	}
 	return framework.NewResult(framework.Success)
 }
 
-func (frw *frameworkImpl) runFilterPlugin(
-	ctx context.Context,
-	pl framework.FilterPlugin,
-	bindingSpec *workv1alpha2.ResourceBindingSpec,
-	bindingStatus *workv1alpha2.ResourceBindingStatus,
-	cluster *clusterv1alpha1.Cluster,
-) *framework.Result {
+// runFilterPluginWithContext calls FilterPluginWithContext.FilterWithContext if available, otherwise falls back to FilterPlugin.Filter.
+func (frw *frameworkImpl) runFilterPluginWithContext(pl framework.FilterPlugin, filterCtx *framework.FilterContext) *framework.Result {
 	startTime := time.Now()
-	result := pl.Filter(ctx, bindingSpec, bindingStatus, cluster)
+	var result *framework.Result
+
+	// Try to call FilterWithContext if the plugin implements FilterPluginWithContext interface
+	if pluginWithContext, ok := pl.(framework.FilterPluginWithContext); ok {
+		result = pluginWithContext.FilterWithContext(filterCtx)
+	} else {
+		// Fall back to Filter with separate parameters for backward compatibility
+		result = pl.Filter(filterCtx.Context, filterCtx.BindingSpec, filterCtx.BindingStatus, filterCtx.Cluster)
+	}
+
 	frw.metricsRecorder.observePluginDurationAsync(filter, pl.Name(), result, utilmetrics.DurationInSeconds(startTime))
 	return result
 }

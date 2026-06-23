@@ -15,13 +15,13 @@ package search
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	fakeclientset "k8s.io/client-go/kubernetes/fake"
 	coretesting "k8s.io/client-go/testing"
-	"k8s.io/utils/ptr"
 
 	operatorv1alpha1 "github.com/karmada-io/karmada/operator/pkg/apis/operator/v1alpha1"
 	"github.com/karmada-io/karmada/operator/pkg/constants"
@@ -44,7 +44,7 @@ func TestEnsureKarmadaSearch(t *testing.T) {
 				ImageRepository: image,
 				ImageTag:        imageTag,
 			},
-			Replicas:        ptr.To[int32](replicas),
+			Replicas:        new(replicas),
 			Annotations:     annotations,
 			Labels:          labels,
 			Resources:       corev1.ResourceRequirements{},
@@ -54,7 +54,7 @@ func TestEnsureKarmadaSearch(t *testing.T) {
 	}
 
 	// Create fake clientset.
-	fakeClient := fakeclientset.NewSimpleClientset()
+	fakeClient := fakeclientset.NewClientset()
 	etcdCfg := &operatorv1alpha1.Etcd{
 		Local: &operatorv1alpha1.LocalEtcd{},
 	}
@@ -64,8 +64,35 @@ func TestEnsureKarmadaSearch(t *testing.T) {
 	}
 
 	actions := fakeClient.Actions()
-	if len(actions) != 2 {
-		t.Fatalf("expected 2 actions, but got %d", len(actions))
+	// We now create deployment, service and PDB, so expect 3 actions
+	if len(actions) != 3 {
+		t.Fatalf("expected 3 actions, but got %d", len(actions))
+	}
+
+	// Check that we have deployment, service, and PDB
+	deploymentCount := 0
+	serviceCount := 0
+	pdbCount := 0
+	for _, action := range actions {
+		if action.GetResource().Resource == "deployments" {
+			deploymentCount++
+		} else if action.GetResource().Resource == "services" {
+			serviceCount++
+		} else if action.GetResource().Resource == "poddisruptionbudgets" {
+			pdbCount++
+		}
+	}
+
+	if deploymentCount != 1 {
+		t.Errorf("expected 1 deployment actions, but got %d", deploymentCount)
+	}
+
+	if serviceCount != 1 {
+		t.Errorf("expected 1 service action, but got %d", serviceCount)
+	}
+
+	if pdbCount != 1 {
+		t.Errorf("expected 1 PDB action, but got %d", pdbCount)
 	}
 }
 
@@ -86,7 +113,7 @@ func TestInstallKarmadaSearch(t *testing.T) {
 				ImageRepository: image,
 				ImageTag:        imageTag,
 			},
-			Replicas:          ptr.To[int32](replicas),
+			Replicas:          new(replicas),
 			Annotations:       annotations,
 			Labels:            labels,
 			Resources:         corev1.ResourceRequirements{},
@@ -97,7 +124,7 @@ func TestInstallKarmadaSearch(t *testing.T) {
 	}
 
 	// Create fake clientset.
-	fakeClient := fakeclientset.NewSimpleClientset()
+	fakeClient := fakeclientset.NewClientset()
 	etcdCfg := &operatorv1alpha1.Etcd{
 		Local: &operatorv1alpha1.LocalEtcd{},
 	}
@@ -106,9 +133,99 @@ func TestInstallKarmadaSearch(t *testing.T) {
 		t.Fatalf("failed to install karmada search: %v", err)
 	}
 
-	err = verifyDeploymentCreation(fakeClient, replicas, imagePullPolicy, extraArgs, name, namespace, image, imageTag, priorityClassName)
+	deployment, err := verifyDeploymentCreation(fakeClient)
 	if err != nil {
 		t.Fatalf("failed to verify karmada search deployment creation: %v", err)
+	}
+
+	// Verify deployment details
+	if err := verifyDeploymentDetails(deployment, replicas, imagePullPolicy, extraArgs, name, namespace, image, imageTag, priorityClassName); err != nil {
+		t.Fatalf("failed to verify deployment details: %v", err)
+	}
+}
+
+func TestInstallKarmadaSearchWithTolerationsAndAffinity(t *testing.T) {
+	var replicas int32 = 2
+	image, imageTag := "docker.io/karmada/karmada-search", "latest"
+	name := "karmada-demo"
+	namespace := "test"
+	imagePullPolicy := corev1.PullIfNotPresent
+
+	tolerations := []corev1.Toleration{
+		{
+			Key:      "node-role.kubernetes.io/master",
+			Operator: corev1.TolerationOpExists,
+			Effect:   corev1.TaintEffectNoSchedule,
+		},
+	}
+	affinity := &corev1.Affinity{
+		NodeAffinity: &corev1.NodeAffinity{
+			RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+				NodeSelectorTerms: []corev1.NodeSelectorTerm{
+					{
+						MatchExpressions: []corev1.NodeSelectorRequirement{
+							{
+								Key:      "kubernetes.io/os",
+								Operator: corev1.NodeSelectorOpIn,
+								Values:   []string{"linux"},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := &operatorv1alpha1.KarmadaSearch{
+		CommonSettings: operatorv1alpha1.CommonSettings{
+			Image: operatorv1alpha1.Image{
+				ImageRepository: image,
+				ImageTag:        imageTag,
+			},
+			Replicas:        new(replicas),
+			Resources:       corev1.ResourceRequirements{},
+			ImagePullPolicy: imagePullPolicy,
+			Tolerations:     tolerations,
+			Affinity:        affinity,
+		},
+		ExtraArgs: map[string]string{},
+	}
+
+	fakeClient := fakeclientset.NewClientset()
+	etcdCfg := &operatorv1alpha1.Etcd{
+		Local: &operatorv1alpha1.LocalEtcd{},
+	}
+
+	err := installKarmadaSearch(fakeClient, cfg, etcdCfg, name, namespace, map[string]bool{})
+	if err != nil {
+		t.Fatalf("failed to install karmada search: %v", err)
+	}
+
+	deployment, err := verifyDeploymentCreation(fakeClient)
+	if err != nil {
+		t.Fatalf("failed to verify deployment creation: %v", err)
+	}
+
+	if len(deployment.Spec.Template.Spec.Tolerations) != 1 {
+		t.Fatalf("expected 1 toleration, but got %d", len(deployment.Spec.Template.Spec.Tolerations))
+	}
+	if deployment.Spec.Template.Spec.Tolerations[0].Key != "node-role.kubernetes.io/master" {
+		t.Errorf("expected toleration key 'node-role.kubernetes.io/master', but got '%s'", deployment.Spec.Template.Spec.Tolerations[0].Key)
+	}
+
+	if deployment.Spec.Template.Spec.Affinity == nil {
+		t.Fatal("expected affinity to be set, but it was nil")
+	}
+	nodeAffinity := deployment.Spec.Template.Spec.Affinity.NodeAffinity
+	if nodeAffinity == nil || nodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
+		t.Fatal("expected node affinity with required scheduling terms, but it was nil")
+	}
+	terms := nodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms
+	if len(terms) != 1 {
+		t.Fatalf("expected 1 node selector term, but got %d", len(terms))
+	}
+	if terms[0].MatchExpressions[0].Key != "kubernetes.io/os" {
+		t.Errorf("expected match expression key 'kubernetes.io/os', but got '%s'", terms[0].MatchExpressions[0].Key)
 	}
 }
 
@@ -118,7 +235,7 @@ func TestCreateKarmadaSearchService(t *testing.T) {
 	namespace := "test"
 
 	// Initialize fake clientset.
-	client := fakeclientset.NewSimpleClientset()
+	client := fakeclientset.NewClientset()
 
 	err := createKarmadaSearchService(client, name, namespace)
 	if err != nil {
@@ -153,26 +270,33 @@ func TestCreateKarmadaSearchService(t *testing.T) {
 	}
 }
 
-// verifyDeploymentCreation validates the details of a Deployment against the expected parameters.
-func verifyDeploymentCreation(client *fakeclientset.Clientset, replicas int32, imagePullPolicy corev1.PullPolicy, extraArgs map[string]string, name, namespace, image, imageTag, priorityClassName string) error {
-	// Assert that a Deployment was created.
+// verifyDeploymentCreation validates that a Deployment and PDB were created and returns the deployment.
+func verifyDeploymentCreation(client *fakeclientset.Clientset) (*appsv1.Deployment, error) {
+	// Assert that a Deployment and PDB were created.
 	actions := client.Actions()
-	if len(actions) != 1 {
-		return fmt.Errorf("expected exactly 1 action either create or update, but got %d actions", len(actions))
+	// We now create deployment and PDB, so expect 2 actions
+	if len(actions) != 2 {
+		return nil, fmt.Errorf("expected exactly 2 actions (deployment + PDB), but got %d actions", len(actions))
 	}
 
-	// Check that the action was a Deployment creation.
-	createAction, ok := actions[0].(coretesting.CreateAction)
-	if !ok {
-		return fmt.Errorf("expected a CreateAction, but got %T", actions[0])
+	// Find the deployment action
+	var deployment *appsv1.Deployment
+	for _, action := range actions {
+		if action.GetResource().Resource == "deployments" {
+			createAction, ok := action.(coretesting.CreateAction)
+			if !ok {
+				return nil, fmt.Errorf("expected a CreateAction for deployment, but got %T", action)
+			}
+			deployment = createAction.GetObject().(*appsv1.Deployment)
+			break
+		}
 	}
 
-	if createAction.GetResource().Resource != "deployments" {
-		return fmt.Errorf("expected action on 'deployments', but got '%s'", createAction.GetResource().Resource)
+	if deployment == nil {
+		return nil, fmt.Errorf("expected deployment action, but none found")
 	}
 
-	deployment := createAction.GetObject().(*appsv1.Deployment)
-	return verifyDeploymentDetails(deployment, replicas, imagePullPolicy, extraArgs, name, namespace, image, imageTag, priorityClassName)
+	return deployment, nil
 }
 
 // verifyDeploymentDetails validates the details of a Deployment against the expected parameters.
@@ -276,10 +400,5 @@ func verifyExtraArgs(container *corev1.Container, extraArgs map[string]string) e
 
 // contains check if a slice contains a specific string.
 func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(slice, item)
 }
